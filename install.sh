@@ -52,3 +52,15 @@ update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
 
 echo ">> done! Trayy is installed at $INSTALL_DIR"
 echo "   Launch it from your app menu, or run: $INSTALL_DIR/trayy.pyz"
+
+echo ">> checking input group membership..."
+if id -nG | tr ' ' '\n' | grep -qx "input"; then
+    echo "   already in 'input' group"
+else
+    echo "   adding $USER to 'input' group (needed for click interception)..."
+    if sudo usermod -aG input "$USER"; then
+        newgrp input
+    else
+        echo "   warning: could not add to 'input' group — run 'sudo usermod -aG input $USER' manually"
+    fi
+fi
