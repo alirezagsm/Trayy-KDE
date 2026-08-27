@@ -1,0 +1,19 @@
+{
+    "KPlugin": {
+        "Name": "Trayy",
+        "Description": "Send specified apps to system tray",
+        "Icon": "preferences-system-windows",
+        "Authors": [
+            {
+                "Name": "alirezagsm"
+            }
+        ],
+        "Id": "Trayy",
+        "Version": "__TRAYY_VERSION__",
+        "License": "GPL-3.0",
+        "Website": "__REPO_URL__"
+    },
+    "X-Plasma-API": "javascript",
+    "X-Plasma-MainScript": "code/main.js",
+    "KPackageStructure": "KWin/Script"
+}

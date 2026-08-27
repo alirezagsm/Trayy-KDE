@@ -1,0 +1,11 @@
+/*
+/src/daemon/build/
+/src/trayyd
+__pycache__/
+
+!/.gitignore
+!/README.md
+!/kwin/
+!/media/
+!/src/
+!/install.sh
