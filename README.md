@@ -33,7 +33,7 @@ Looking for Trayy for Windows? <a href="https://github.com/alirezagsm/Trayy-Wind
 
 ### Method 1: One-liner install
 
-1. Run the install script which installs the Python dependencies, downloads the latest release, installs it to `~/.local/share/trayy`, and creates a desktop entry:
+1. Run the install script which installs Trayy to `~/.local/share/trayy` and adds your user to the `input` group which is needed for click interception:
 
     ```bash
     curl -sL https://raw.githubusercontent.com/alirezagsm/Trayy-KDE/main/install.sh | bash
@@ -51,15 +51,23 @@ Looking for Trayy for Windows? <a href="https://github.com/alirezagsm/Trayy-Wind
     pip install dbus-next PyQt6
     ```
 
-2. Kick things off by downloading the latest release from the [Releases page](https://github.com/alirezagsm/Trayy-KDE/releases) and unzipping it to your desired location.
-3. Make sure `trayy.pyz` and `trayyd` are hanging out in the same folder. Make them executable and run the app to get the party started:
+2. Add your user to the `input` group (needed for click interception):
+
+    ```bash
+    sudo usermod -aG input $USER
+    ```
+
+    Then log out and back in (or run `newgrp input`).
+
+3. Kick things off by downloading the latest release from the [Releases page](https://github.com/alirezagsm/Trayy-KDE/releases) and unzipping it to your desired location.
+4. Make sure `trayy.pyz` and `trayyd` are hanging out in the same folder. Make them executable and run the app to get the party started:
 
     ```bash
     chmod +x trayy.pyz trayyd
     ./trayy.pyz
     ```
 
-4. Activate the KWin script: open **System Settings → Window Management → KWin Scripts**, find **Trayy** in the list, activate it and click **Apply**.
+5. Activate the KWin script: open **System Settings → Window Management → KWin Scripts**, find **Trayy** in the list, activate it and click **Apply**.
 
 ### Setup
 
