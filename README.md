@@ -25,13 +25,13 @@ Looking for Trayy for Windows? <a href="https://github.com/alirezagsm/Trayy-Wind
 -   **Light as a Feather**: Fully portable and extremely lightweight.
 
 <p align="center">
-  <img src="media/demo.png" alt="GUI demo" style="height:380px; width:auto; vertical-align:top;" align="top"/>
-  <img src="media/demo.gif" alt="Video demo" style="height:375px; width:550px; vertical-align:top;" align="top" autoplay/>
+  <img src="media/demo.png" alt="GUI demo" style="height:460px; width:auto;" align="bottom"/>
+  <img src="media/demo.gif" alt="Video demo" style="height:375px; width:auto;" align="bottom" autoplay/>
 </p>
 
 ## 🚀 Getting Started
 
-### Method 1: One-liner install
+### Method A: One-liner Install
 
 1. Run the install script which installs Trayy to `~/.local/share/trayy` and adds your user to the `input` group which is needed for click interception:
 
@@ -43,7 +43,7 @@ Looking for Trayy for Windows? <a href="https://github.com/alirezagsm/Trayy-Wind
 
 3. Activate the KWin script: open **System Settings → Window Management → KWin Scripts**, find **Trayy** in the list, activate it and click **Apply**. Trayy registers a KWin script that it uses for window management.
 
-### Method 2: Manual install
+### Method B: Manual Install
 
 1. Install the Python dependencies:
 
@@ -83,7 +83,7 @@ Now, list out your favorite apps. Here are the rules:
 - You can also use the **"Pick"** button to interactively pick your desired app.
 
 > [!IMPORTANT]
-> **Heads up:** Trayy relies on KDE KWin's scripting API for window management.
+> **Heads up:** Trayy relies on KDE KWin's scripting API for window management and is not compatible with other environments.
 
 You can modify your entries with these tricks:
 
