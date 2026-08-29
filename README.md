@@ -92,7 +92,7 @@ You can modify your entries with these tricks:
 
 Done! Depending on your settings, your chosen apps will now be tucked away neatly in the system tray.
 
-## 🖱️ Input Devices & Click Interception
+## 🖱️ Click Interception
 
 The **Send to Tray also when Closed** feature works by intercepting mouse clicks on window close buttons. This requires Trayy to grab your input device and sit in the middle of the input event chain. Here's how that works:
 
