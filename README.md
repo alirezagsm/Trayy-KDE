@@ -119,12 +119,12 @@ Trayy creates virtual forward devices named `trayy`. Add a skip rule to your rem
 - **Input Remapper**: add `trayy` to the `blacklist` array in your config
 - **Other tools**: use an equivalent "ignore/skip device" rule with the `/trayy/` regex pattern
 
-## ✨Tips and Tricks:
+## ✨Tips and Tricks
 
 -   **Take a peek**: Click on a tray icon to bring its app into the spotlight. If it's already in focus, it'll sneak back into the tray. This way, you can quickly peek at your apps without breaking your workflow!
 -   **Startup**: Let Trayy join your startup squad! Add Trayy to your KDE Autostart settings, along with all your other favorite apps you want to keep tucked away in the system tray. Trayy will chill for a bit, letting the startup process finish, then swoop in to tidy everything up! It's a game changer for messaging and productivity apps!
 
-## 😊 Acknowledgements
+## 😊 Support
 
 If Trayy made your workflow smoother, consider supporting its development! ☕✨
 
