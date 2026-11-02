@@ -162,10 +162,12 @@ class AppTrayIcon:
         self.bus = None
         self.app_name = app_name
         self.title_filter = title_filter
-        suffix = app_name.replace("-", "_").replace(" ", "_").replace(":", "_")
+        suffix = (
+            app_name.replace(".", "").replace("-", "_").replace(" ", "_").replace(":", "_")
+        )
         if title_filter:
             title_suffix = (
-                title_filter.replace("-", "_").replace(" ", "_").replace(":", "_")
+                title_filter.replace(".", "").replace("-", "_").replace(" ", "_").replace(":", "_")
             )
             suffix = f"{suffix}_{title_suffix}"
         self.service_name = f"org.kde.Trayy.{suffix}"
