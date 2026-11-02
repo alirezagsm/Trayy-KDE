@@ -8,7 +8,7 @@ from pathlib import Path
 
 logger = logging.getLogger("trayy")
 
-VERSION = "0.8"
+VERSION = "0.85"
 REPO_URL = "https://github.com/alirezagsm/Trayy-KDE"
 BOOT_GRACE_SECONDS = 20
 STARTUP_DELAY = 10.0

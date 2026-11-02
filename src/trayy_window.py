@@ -543,14 +543,19 @@ class ManagerTrayIcon:
         await _register_sni(self.bus, self.SERVICE_NAME)
         self.registered = True
 
-    async def teardown(self):
+    def _stop_ui_proc(self):
+        """Stop the manager GUI process synchronously (called early in shutdown)."""
         if self._ui_proc and self._ui_proc.poll() is None:
             self._ui_proc.terminate()
             try:
-                self._ui_proc.wait(timeout=3)
+                self._ui_proc.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 self._ui_proc.kill()
                 self._ui_proc.wait()
+        self._ui_proc = None
+
+    async def teardown(self):
+        self._stop_ui_proc()
         if self.registered and self.bus:
             await _unregister_sni(self.bus, self.SERVICE_NAME)
             self.registered = False
@@ -973,6 +978,9 @@ class TrayDaemon:
 
 
 _trayd_proc: subprocess.Popen | None = None
+# Set on shutdown so the watchdog does not respawn trayyd (an orphan would
+# keep the service cgroup alive and hang systemd's stop).
+_shutting_down = False
 
 
 def _stop_trayyd():
@@ -1007,6 +1015,8 @@ def _trayyd_already_running() -> bool:
 
 def _ensure_trayyd():
     global _trayd_proc
+    if _shutting_down:
+        return
     if not TRAYD_BINARY.exists():
         logger.warning("trayyd binary not found at %s", TRAYD_BINARY)
         return
@@ -1071,6 +1081,9 @@ async def run_daemon(no_taskbar=True, no_close=True):
         name = msg.body[0] if len(msg.body) > 0 else ""
         new_owner = msg.body[2] if len(msg.body) > 2 else ""
         if name == "org.trayy.Daemon" and new_owner == "" and _NO_CLOSE:
+            if _shutting_down:
+                logger.debug("trayyd lost D-Bus name during shutdown — not restarting")
+                return False
             logger.info("trayyd lost D-Bus name — restarting")
             _ensure_trayyd()
         return False
@@ -1135,10 +1148,14 @@ async def run_daemon(no_taskbar=True, no_close=True):
     stop = asyncio.get_event_loop().create_future()
 
     def handle_signal():
+        global _shutting_down
+        _shutting_down = True
         if not stop.done():
             stop.set_result(None)
 
     async def handle_quit_daemon():
+        global _shutting_down
+        _shutting_down = True
         if not stop.done():
             stop.set_result(None)
 
@@ -1161,9 +1178,19 @@ async def run_daemon(no_taskbar=True, no_close=True):
     try:
         await stop
     finally:
-        await manager_icon.teardown()
-        await daemon.shutdown()
-        await trayy_kwin.shutdown()
+        # Stop child processes first — they share the service cgroup, so
+        # they must be gone before exit even if the timed cleanup below fails.
         _stop_trayyd()
-        bus.disconnect()
-        PID_FILE.unlink(missing_ok=True)
+        manager_icon._stop_ui_proc()
+
+        async def _cleanup():
+            await manager_icon.teardown()
+            await daemon.shutdown()
+            await trayy_kwin.shutdown()
+            bus.disconnect()
+            PID_FILE.unlink(missing_ok=True)
+
+        try:
+            await asyncio.wait_for(_cleanup(), timeout=2.0)
+        except asyncio.TimeoutError:
+            logger.warning("shutdown cleanup timed out — forcing exit")
