@@ -338,6 +338,13 @@ class AppTrayIcon:
         if result:
             return result
 
+        # Chrome PWAs share the class "com.google.Chrome"; the title equals
+        # the PWA desktop Name, so resolve the icon by title.
+        if self.title_filter:
+            result = self._find_pwa_icon_by_title(self.title_filter)
+            if result:
+                return result
+
         try:
             full = await discover_windows_full(self.app_name, self.title_filter)
             for w in full:
@@ -360,7 +367,7 @@ class AppTrayIcon:
         # Try desktop file
         desktop_file = self._find_desktop_file(app_class)
         if desktop_file:
-            icon_name = self._read_icon_from_desktop(desktop_file)
+            icon_name = self._read_desktop_field(Path(desktop_file), "Icon")
             if icon_name:
                 icon_file = self._resolve_icon_file(icon_name)
                 if icon_file:
@@ -387,6 +394,7 @@ class AppTrayIcon:
 
         search_dirs = [
             "/usr/share/applications",
+            f"{home}/.local/share/applications",
             f"{home}/.local/share/flatpak/exports/share/applications",
             "/var/lib/flatpak/exports/share/applications",
         ]
@@ -406,21 +414,6 @@ class AppTrayIcon:
             return str(exact_end[0])
         best = min(matches, key=lambda m: len(m.stem))
         return str(best)
-
-    def _read_icon_from_desktop(self, desktop_file: str) -> str | None:
-        try:
-            result = subprocess.run(
-                ["grep", "-i", "^Icon=", desktop_file],
-                capture_output=True,
-                text=True,
-                timeout=2,
-            )
-            if result.returncode == 0:
-                first_line = result.stdout.strip().split("\n")[0]
-                return first_line.split("=", 1)[1].strip()
-        except Exception:
-            pass
-        return None
 
     def _resolve_icon_file(self, icon_name: str) -> Path | None:
         """Resolve an icon name to a file path by searching icon theme directories."""
@@ -460,6 +453,39 @@ class AppTrayIcon:
                 if candidate_svg.is_file():
                     return candidate_svg
 
+        return None
+
+    def _find_pwa_icon_by_title(self, title: str) -> tuple[str, str, bytes | None] | None:
+        """Resolve a Chrome PWA icon by its window title (== the PWA desktop Name)."""
+        if not title:
+            return None
+        apps_dir = Path.home() / ".local" / "share" / "applications"
+        if not apps_dir.is_dir():
+            return None
+        for desktop in apps_dir.glob("*.desktop"):
+            try:
+                name = self._read_desktop_field(desktop, "Name")
+            except Exception:
+                continue
+            if name is None or name.strip() != title.strip():
+                continue
+            icon_name = self._read_desktop_field(desktop, "Icon")
+            if not icon_name:
+                continue
+            icon_file = self._resolve_icon_file(icon_name)
+            if icon_file:
+                return icon_file.name, str(icon_file.parent), icon_file.read_bytes()
+        return None
+
+    @staticmethod
+    def _read_desktop_field(desktop: Path, field: str) -> str | None:
+        try:
+            for line in desktop.read_text().splitlines():
+                line = line.strip()
+                if line.startswith(f"{field}="):
+                    return line.split("=", 1)[1].strip()
+        except OSError:
+            return None
         return None
 
     def _find_chrome_pwa_icon(self, app_class: str) -> Path | None:
