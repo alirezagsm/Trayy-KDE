@@ -21,6 +21,7 @@ Looking for Trayy for Windows? <a href="https://github.com/alirezagsm/Trayy-Wind
 -   **Send to Tray**: Send your favorite apps to the system tray for a clutter-free workspace!
 -   **Hide and Seek Champion**: Enjoy the power to completely hide apps from the taskbar, keeping your desktop neat and tidy.
 -   **App Support**: Ideal for Progressive Web Apps (PWAs) and (most) apps that didn't get the memo about system tray support.
+-   **Custom Icons**: Dress up your tray with custom icons for any app!
 -   **Compatible with KDE Plasma**: Built for KDE Plasma on Wayland, with support for system tray icons and window management.
 -   **Light as a Feather**: Fully portable and extremely lightweight.
 
@@ -89,6 +90,7 @@ You can modify your entries with these tricks:
 
 - If your app has multiple windows, you can optionally control which window to target by adding the desired title name to your entry. For example `thunderbird Write` will capture the email compose window specifically.
 - For even more control, you can use regular expressions by prefixing the app class and/or title filter with `regex:`. For example `kwrite regex:^Daily Notes` will only match the titles starting with 'Daily Notes'.
+- Every entry shows its resolved icon. Not feeling it? **Click** an app's icon in the manager to pick any image file, or **right-click** it to go back to auto-detection.
 
 Done! Depending on your settings, your chosen apps will now be tucked away neatly in the system tray.
 
