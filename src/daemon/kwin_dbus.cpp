@@ -379,7 +379,7 @@ void KWinDBus::handle_message(DBusConnection* conn, DBusMessage* msg) {
         window_info_ = WindowInfo{};
         have_window_info_ = false;
 
-        // Space-separated key:value pairs — caption is always last and may contain spaces
+        // Space-separated key:value pairs. caption is always last and may contain spaces
         std::string cap_key = " cap:";
         auto cap_pos = raw_data.find(cap_key);
         std::string parse_target = (cap_pos != std::string::npos)
@@ -712,7 +712,7 @@ void KWinDBus::set_configured_apps(const std::vector<AppEntry>& apps) {
 }
 
 void KWinDBus::on_cursor_update(const std::string& raw_data) {
-    // Cursor update received — currently no consumer reads cached cursor state.
-    // Keep the callback for future use (e.g., real-time cursor position tracking).
+    // cursor update received. no consumer reads cached cursor state yet.
+    // kept for future use (real-time cursor position tracking, etc.).
     (void)raw_data;
 }

@@ -58,7 +58,7 @@ static void drain_device_monitor() {
     if (g_device_monitor_fd < 0) return;
     char buf[256];
     ssize_t n = read(g_device_monitor_fd, buf, sizeof(buf));
-    (void)n; // just consume pending events
+    (void)n; // consume pending events
 }
 
 // grab a single device, returns GrabbedDevice or all -1 fds

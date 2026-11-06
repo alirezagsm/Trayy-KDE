@@ -229,7 +229,7 @@ async def apply_update(
                     return False, f"'{name}' not found in {RELEASE_ZIP_NAME}"
                 dest = install / name
                 # Write to a temp file in the same directory, then atomically
-                # replace — avoids a half-written binary if we're interrupted.
+                # replace. avoids a half-written binary on interruption.
                 tmp_dest = dest.with_suffix(dest.suffix + ".new")
                 with zf.open(member) as src, open(tmp_dest, "wb") as out:
                     shutil.copyfileobj(src, out)
