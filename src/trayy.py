@@ -8,17 +8,26 @@ from pathlib import Path
 
 logger = logging.getLogger("trayy")
 
-VERSION = "0.85"
+VERSION = "0.9"
 REPO_URL = "https://github.com/alirezagsm/Trayy-KDE"
 BOOT_GRACE_SECONDS = 20
 STARTUP_DELAY = 10.0
+
+ICONPATH_PREFIX = "iconpath:"
 
 
 def ensure_config():
     if CONFIG_FILE.exists():
         return
     default_config = "\n".join(
-        ["NO_TASKBAR 1", "NO_CLOSE 1", "", "# Add your apps below, one per line:", "# app_class [window_title]", ""]
+        [
+            "NO_TASKBAR 1",
+            "NO_CLOSE 1",
+            "",
+            "# Add your apps below, one per line:",
+            "# app_class [window_title]",
+            "",
+        ]
     )
     CONFIG_FILE.write_text(default_config)
     print(f"Created default .config at {CONFIG_FILE}")
@@ -37,6 +46,7 @@ def check_dependencies():
             print(m)
         sys.exit(1)
 
+
 # Resolve paths: .pyz mode uses sys.argv[0], dev mode uses __file__.
 if ".pyz" in (__file__ or ""):
     # Three cases for sys.argv[0]:
@@ -48,7 +58,7 @@ if ".pyz" in (__file__ or ""):
     if not _candidate:
         _candidate = str(Path(__file__).parent)
     # If argv[0] points inside the zip (e.g., ".../trayy.pyz/trayy_ui.py"),
-    # extract just the .pyz path by finding the ".pyz/" segment.
+    # extract the .pyz path by finding the ".pyz/" segment.
     if ".pyz/" in _candidate:
         _candidate = _candidate[: _candidate.index(".pyz/") + 4]
     SRC_DIR = Path(_candidate).parent.resolve()
@@ -71,7 +81,10 @@ def _read_flag(lines: list[str], index: int, name: str) -> bool:
     return len(parts) > 1 and parts[1] == "1"
 
 
-def parse_config(path: Path = CONFIG_FILE) -> tuple[bool, bool, list[tuple[str, str]]]:
+def parse_config(
+    path: Path = CONFIG_FILE,
+) -> tuple[bool, bool, list[tuple[str, str, str]]]:
+    """Parse the config file. App lines: ``app_class [window_title] [iconpath:<file>]``."""
     if not path.exists():
         logger.error("no .config file found at %s", path)
         raise SystemExit(1)
@@ -83,10 +96,17 @@ def parse_config(path: Path = CONFIG_FILE) -> tuple[bool, bool, list[tuple[str, 
     apps = []
     for line in lines[2:]:
         stripped = line.strip()
-        if stripped and not stripped.startswith("#"):
-            parts = stripped.split(None, 1)
-            app_title = parts[1] if len(parts) > 1 else ""
-            apps.append((parts[0], app_title))
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.split(None, 1)
+        cls = parts[0]
+        rest = parts[1] if len(parts) > 1 else ""
+        if ICONPATH_PREFIX in rest:
+            title, icon_path = rest.split(ICONPATH_PREFIX, 1)
+            title = title.strip()
+        else:
+            title, icon_path = rest, ""
+        apps.append((cls, title, icon_path))
 
     if not apps:
         logger.warning("no apps listed in .config file — nothing to track")
@@ -94,14 +114,12 @@ def parse_config(path: Path = CONFIG_FILE) -> tuple[bool, bool, list[tuple[str, 
     return no_taskbar, no_close, apps
 
 
-
-
 def main():
     check_dependencies()
     ensure_config()
 
     no_taskbar, no_close, apps = parse_config()
-    app_names = ", ".join(cls for cls, _ in apps)
+    app_names = ", ".join(cls for cls, _, _ in apps)
     logger.info("apps configured: %d (%s)", len(apps), app_names)
 
     # Wait for input devices / remappers to finish initializing (boot-only)
@@ -115,6 +133,7 @@ def main():
         time.sleep(STARTUP_DELAY)
 
     from trayy_window import run_daemon
+
     try:
         asyncio.run(run_daemon(no_taskbar=no_taskbar, no_close=no_close))
     except KeyboardInterrupt:

@@ -13,10 +13,12 @@ from PyQt6.QtGui import QDesktopServices, QFontMetrics, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressDialog,
     QPushButton,
@@ -26,29 +28,85 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from trayy import SRC_DIR, CONFIG_FILE, PID_FILE, VERSION as CURRENT_VERSION, REPO_URL, parse_config
+from trayy import (
+    SRC_DIR,
+    CONFIG_FILE,
+    PID_FILE,
+    VERSION as CURRENT_VERSION,
+    REPO_URL,
+    ICONPATH_PREFIX,
+    parse_config,
+)
 import trayy_update
 
 logger = logging.getLogger("trayy.ui")
 
+# Rasterize theme icons at this size; _update_icon scales down to display.
+_ICON_SOURCE = 64
 
-def format_app(app: tuple[str, str]) -> str:
-    cls, title = app
+
+def format_app(app: tuple[str, ...]) -> str:
+    cls = app[0]
+    title = app[1] if len(app) > 1 else ""
     return f"{cls} {title}" if title else cls
 
 
-def parse_app_text(text: str) -> tuple[str, str]:
+def parse_app_text(text: str) -> tuple[str, str, str]:
     parts = text.split(None, 1)
     cls = parts[0] if parts else ""
     title = parts[1] if len(parts) > 1 else ""
-    return (cls, title)
+    return (cls, title, "")
 
 
-def save_config(no_taskbar: bool, no_close: bool, apps: list[tuple[str, str]]):
+def save_config(no_taskbar: bool, no_close: bool, apps: list[tuple[str, ...]]):
     lines = [f"NO_TASKBAR {1 if no_taskbar else 0}", f"NO_CLOSE {1 if no_close else 0}"]
-    for cls, title in apps:
-        lines.append(f"{cls} {title}".strip())
+    for app in apps:
+        cls = app[0]
+        title = app[1] if len(app) > 1 else ""
+        icon_path = app[2] if len(app) > 2 else ""
+        line = f"{cls} {title}".strip()
+        if icon_path:
+            line += f" {ICONPATH_PREFIX}{icon_path}"
+        lines.append(line)
     CONFIG_FILE.write_text("\n".join(lines) + ("\n" if lines else ""))
+
+
+def _resolve_icon_pixmap(
+    icon_ref: str, app_class: str = "", title: str = ""
+) -> QPixmap | None:
+    """Resolve an icon path or theme name to a pixmap; None if not found."""
+    if not icon_ref:
+        return None
+    p = Path(icon_ref).expanduser()
+    if p.is_file():
+        pm = QPixmap(str(p))
+        return pm if not pm.isNull() else None
+    home = Path.home()
+    icon_search_dirs = [
+        f"{home}/.local/share/flatpak/exports/share/icons/hicolor",
+        "/var/lib/flatpak/exports/share/icons/hicolor",
+        "/usr/share/icons/hicolor",
+        "/usr/share/icons/breeze",
+        f"{home}/.local/share/icons/hicolor",
+    ]
+    preferred_sizes = ["48x48", "64x64", "32x32", "128x128", "96x96", "24x24"]
+    for icon_dir in icon_search_dirs:
+        base = Path(icon_dir)
+        if not base.exists():
+            continue
+        for size in preferred_sizes:
+            apps_dir = base / size / "apps"
+            if not apps_dir.is_dir():
+                continue
+            for ext in (".png", ".svg"):
+                candidate = apps_dir / (icon_ref + ext)
+                if candidate.is_file():
+                    pm = QPixmap(str(candidate))
+                    return pm if not pm.isNull() else None
+    theme_icon = QIcon.fromTheme(icon_ref)
+    if not theme_icon.isNull():
+        return theme_icon.pixmap(_ICON_SOURCE, _ICON_SOURCE)
+    return None
 
 
 def notify_daemon_reload():
@@ -62,14 +120,87 @@ def notify_daemon_reload():
         logger.warning("could not signal daemon: %s", e)
 
 
+def _placeholder_icon_pixmap() -> QPixmap | None:
+    """Generic placeholder icon."""
+    theme_icon = QIcon.fromTheme("notification-empty")
+    if theme_icon.isNull():
+        return None
+    return theme_icon.pixmap(_ICON_SOURCE, _ICON_SOURCE)
+
+
+def _read_desktop_field(path: Path, field: str) -> str:
+    try:
+        for line in path.read_text().splitlines():
+            if line.startswith(field + "="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+
+def _icon_from_desktop_file(path: Path) -> QPixmap | None:
+    icon_ref = _read_desktop_field(path, "Icon")
+    if not icon_ref:
+        return None
+    pm = _resolve_icon_pixmap(icon_ref)
+    if pm is not None:
+        return pm
+    if icon_ref.startswith("/"):
+        return _resolve_icon_pixmap(Path(icon_ref).stem)
+    return None
+
+
+def _auto_discover_icon(app_class: str, title: str) -> QPixmap | None:
+    """Find an app's icon from desktop files by class and title."""
+    home = Path.home()
+    search_dirs = [
+        f"{home}/.local/share/applications",
+        "/usr/share/applications",
+        f"{home}/.local/share/flatpak/exports/share/applications",
+        "/var/lib/flatpak/exports/share/applications",
+    ]
+    cls_l = app_class.lstrip(".").lower()
+    candidates: list[Path] = []
+    for sd in search_dirs:
+        base = Path(sd)
+        if not base.is_dir():
+            continue
+        for f in base.glob("*.desktop"):
+            stem_l = f.stem.lower()
+            if cls_l and cls_l in stem_l:
+                candidates.append(f)
+    if title:
+        for f in candidates:
+            if _read_desktop_field(f, "Name") == title:
+                pm = _icon_from_desktop_file(f)
+                if pm is not None:
+                    return pm
+    if candidates:
+        best = min(candidates, key=lambda f: len(f.stem))
+        return _icon_from_desktop_file(best)
+    return None
+
+
 class AppRow(QWidget):
-    def __init__(self, app: tuple[str, str], on_remove, on_rename=None):
+    def __init__(
+        self, app: tuple[str, ...], on_remove, on_rename=None, on_icon_changed=None
+    ):
         super().__init__()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.app = app  # (class, title) tuple
+        self.app = app
         display_name = format_app(app)
+        self._on_icon_changed = on_icon_changed
+
+        self._icon_label = QLabel()
+        self._icon_label.setFixedSize(24, 24)
+        self._icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._icon_label.setToolTip(
+            "Click to choose a new icon\u00b7Right-click to clear"
+        )
+        self._icon_label.mousePressEvent = self._on_icon_click
+        layout.addWidget(self._icon_label)
 
         self._label = QLabel(display_name)
         self._label.setStyleSheet("font-size: 14px; padding: 6px;")
@@ -79,7 +210,7 @@ class AppRow(QWidget):
         layout.addWidget(self._label, stretch=1)
 
         remove_btn = QPushButton("✕")
-        remove_btn.setFixedSize(28, 28)
+        remove_btn.setFixedSize(24, 24)
         remove_btn.setStyleSheet(
             "QPushButton { background-color: #e74c3c; color: white; "
             "border-radius: 4px; font-weight: bold; }"
@@ -90,13 +221,68 @@ class AppRow(QWidget):
 
         self._on_rename = on_rename
         self._editing = False
+        self._update_icon()
+
+    def _current_icon_path(self) -> str:
+        return self.app[2] if len(self.app) > 2 else ""
+
+    def _set_app_with_icon(self, icon_path: str):
+        cls = self.app[0]
+        title = self.app[1] if len(self.app) > 1 else ""
+        self.app = (cls, title, icon_path)
+        self._update_icon()
+        if self._on_icon_changed:
+            self._on_icon_changed()
+
+    def _update_icon(self):
+        pm = None
+        icon_path = self._current_icon_path()
+        if icon_path:
+            pm = _resolve_icon_pixmap(icon_path)
+        if pm is None and not icon_path:
+            cls = self.app[0]
+            title = self.app[1] if len(self.app) > 1 else ""
+            pm = _auto_discover_icon(cls, title)
+        if pm is None:
+            pm = _placeholder_icon_pixmap()
+        if pm is not None and not pm.isNull():
+            scaled = pm.scaled(
+                24,
+                24,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self._icon_label.setPixmap(scaled)
+        else:
+            self._icon_label.clear()
+
+    def _on_icon_click(self, e):
+        pos = e.globalPosition().toPoint()
+        if e.button() == Qt.MouseButton.RightButton:
+            if not self._current_icon_path():
+                return
+            menu = QMenu(self.window())
+            clear_act = menu.addAction("Clear Custom Icon")
+            if menu.exec(pos) is clear_act:
+                self._set_app_with_icon("")
+        else:
+            path, _ = QFileDialog.getOpenFileName(
+                self.window(),
+                "Choose Icon",
+                str(Path.home()),
+                "Images (*.png *.svg *.jpg *.jpeg *.bmp);;All Files (*)",
+            )
+            if path:
+                self._set_app_with_icon(path)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         fm = QFontMetrics(self._label.font())
         available = self._label.width() - 12
         if available > 0:
-            elided = fm.elidedText(format_app(self.app), Qt.TextElideMode.ElideMiddle, available)
+            elided = fm.elidedText(
+                format_app(self.app), Qt.TextElideMode.ElideMiddle, available
+            )
             self._label.setText(elided)
 
     def mouseDoubleClickEvent(self, event):
@@ -122,9 +308,11 @@ class AppRow(QWidget):
     def _commit_edit(self):
         text = self._edit.text().strip()
         if text:
-            new_app = parse_app_text(text)
+            cls, title, _ = parse_app_text(text)
+            new_app = (cls, title, self._current_icon_path())
             if new_app != self.app:
                 self.app = new_app
+                self._update_icon()
                 if self._on_rename:
                     self._on_rename(new_app)
 
@@ -134,7 +322,8 @@ class AppRow(QWidget):
         self._commit_edit()
         text = self._edit.text().strip()
         if text:
-            self.app = parse_app_text(text)
+            cls, title, _ = parse_app_text(text)
+            self.app = (cls, title, self._current_icon_path())
         self._label.setText(format_app(self.app))
         idx = self.layout().indexOf(self._edit)
         self.layout().replaceWidget(self._edit, self._label)
@@ -244,7 +433,7 @@ class TrayyManagerWindow(QMainWindow):
         root = QVBoxLayout(central)
         root.setSpacing(4)
 
-        # Update button — shown at the top when a newer release exists
+        # Update button. shown at the top when a newer release exists
         if self._update_available:
             update_btn = QPushButton("⬆  Update Available")
             update_btn.setStyleSheet(
@@ -338,7 +527,7 @@ class TrayyManagerWindow(QMainWindow):
 
         root.addWidget(self._manager_widget)
 
-        # Help overlay — covers the entire window when shown
+        # Help overlay; covers the entire window when shown
         self._help_widget = QWidget()
         self._help_widget.setStyleSheet("background-color: #1e1e1e;")
         self._help_layout = QVBoxLayout(self._help_widget)
@@ -346,7 +535,9 @@ class TrayyManagerWindow(QMainWindow):
         self._help_layout.setSpacing(4)
 
         version_label = QLabel(f"Trayy version {CURRENT_VERSION}")
-        version_label.setStyleSheet(f"font-size: 16px; font-weight: bold; padding: 4px; color: {self._highlight_color};")
+        version_label.setStyleSheet(
+            f"font-size: 16px; font-weight: bold; padding: 4px; color: {self._highlight_color};"
+        )
         self._help_layout.addWidget(version_label)
 
         help_scroll = QScrollArea()
@@ -364,21 +555,65 @@ class TrayyManagerWindow(QMainWindow):
         help_content_layout.setSpacing(6)
 
         # Options
-        self._add_help_text(help_content_layout, "Options:", bullet=False, color=self._highlight_color)
-        self._add_help_text(help_content_layout, "Hide Apps from Taskbar",
-                            "Listed apps will not appear on the Plasma taskbar when running.")
-        self._add_help_text(help_content_layout, "Map Close Button to Minimize",
-                            "Clicking the X button will minimize the app to the system tray instead of closing it.")
+        self._add_help_text(
+            help_content_layout, "Options:", bullet=False, color=self._highlight_color
+        )
+        self._add_help_text(
+            help_content_layout,
+            "Hide Apps from Taskbar",
+            "Listed apps will not appear on the Plasma taskbar when running.",
+        )
+        self._add_help_text(
+            help_content_layout,
+            "Map Close Button to Minimize",
+            "Clicking the X button will minimize the app to the system tray instead of closing it.",
+        )
 
         # App List Rules
-        self._add_help_text(help_content_layout, "App List Rules:", bullet=False, color=self._highlight_color)
-        self._add_help_text(help_content_layout, "Entry format", "app_class [window_title]")
-        self._add_help_text(help_content_layout,
-                            "app_class", "Window resource class or name to match (e.g. firefox, thunderbird, org.gimp.GIMP).")
-        self._add_help_text(help_content_layout,
-                            "window_title [optional]", "Restricts matching to only windows whose title contains this string.")
-        self._add_help_text(help_content_layout, "Matching",
-                            "Matching is a case-sensitive substring match. You can prefix app_class and/or window_title with regex: to use a regular expression instead (e.g. kwrite regex:^Daily Notes).")
+        self._add_help_text(
+            help_content_layout,
+            "App List Rules:",
+            bullet=False,
+            color=self._highlight_color,
+        )
+        self._add_help_text(
+            help_content_layout,
+            "Entry format",
+            "app_class [window_title]",
+        )
+        self._add_help_text(
+            help_content_layout,
+            "app_class",
+            "Window resource class or name to match (e.g. firefox, thunderbird, org.gimp.GIMP).",
+        )
+        self._add_help_text(
+            help_content_layout,
+            "window_title [optional]",
+            "Restricts matching to only windows whose title contains this string.",
+        )
+        self._add_help_text(
+            help_content_layout,
+            "Matching",
+            "Matching is a case-sensitive substring match. You can prefix app_class and/or window_title with regex: to use a regular expression instead (e.g. kwrite regex:^Daily Notes).",
+        )
+
+        # App Icons
+        self._add_help_text(
+            help_content_layout,
+            "App Icons:",
+            bullet=False,
+            color=self._highlight_color,
+        )
+        self._add_help_text(
+            help_content_layout,
+            "Custom icon",
+            "Click an app's icon to pick a custom image file. It shows up in both the manager and the system tray, and sticks around across restarts.",
+        )
+        self._add_help_text(
+            help_content_layout,
+            "Clear custom icon",
+            "Right-click an app's icon to go back to icon auto-detection.",
+        )
 
         help_scroll.setWidget(help_content)
         self._help_layout.addWidget(help_scroll, stretch=1)
@@ -408,8 +643,10 @@ class TrayyManagerWindow(QMainWindow):
         for app in apps:
             self._add_app_row(app)
 
-    def _add_app_row(self, app: tuple[str, str]):
-        row = AppRow(app, self._remove_row, self._rename_row)
+    def _add_app_row(self, app: tuple[str, ...]):
+        row = AppRow(
+            app, self._remove_row, self._rename_row, on_icon_changed=self._save
+        )
         index = self.list_layout.count() - 1
         if self._pending_add is not None:
             index -= 1
@@ -450,7 +687,9 @@ class TrayyManagerWindow(QMainWindow):
         try:
             result = subprocess.run(
                 ["qdbus-qt6", "org.kde.KWin", "/KWin", "queryWindowInfo"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
@@ -463,7 +702,7 @@ class TrayyManagerWindow(QMainWindow):
         if not cls or cls == "trayy-manager":
             logger.warning("could not detect active window class")
             return
-        app = (cls, "")
+        app = (cls, "", "")
         if app in self._current_apps():
             logger.warning("'%s' is already in the list", cls)
             return
@@ -540,7 +779,7 @@ class TrayyManagerWindow(QMainWindow):
         )
         subprocess.Popen(relauncher, shell=True, start_new_session=True)
 
-        # Stop the daemon — its clean shutdown terminates this UI process.
+        # Stop the daemon; its clean shutdown terminates this UI process.
         if PID_FILE.exists():
             try:
                 pid = int(PID_FILE.read_text().strip())
@@ -550,11 +789,18 @@ class TrayyManagerWindow(QMainWindow):
                 pass
         QApplication.quit()
 
-    def _add_help_text(self, layout: QVBoxLayout, label: str, text: str = "",
-                       color: str | None = None, bullet: bool = True):
+    def _add_help_text(
+        self,
+        layout: QVBoxLayout,
+        label: str,
+        text: str = "",
+        color: str | None = None,
+        bullet: bool = True,
+    ):
         color = color or self._highlight_color
         row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
+        # Indent bulleted items so they don't line up with section headers.
+        row.setContentsMargins(16 if bullet else 0, 0, 0, 0)
         row.setSpacing(4)
         if bullet:
             b = QLabel("•")
@@ -569,7 +815,10 @@ class TrayyManagerWindow(QMainWindow):
         if text:
             desc = QLabel(text)
             desc.setWordWrap(True)
-            desc.setStyleSheet(f"font-size: 12px; padding: 0 0 4px 20px; color: {self._normal_color};")
+            # Left padding lines the description up under the label (indent + bullet).
+            desc.setStyleSheet(
+                f"font-size: 12px; padding: 0 0 4px 34px; color: {self._normal_color};"
+            )
             layout.addWidget(desc)
 
 

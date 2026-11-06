@@ -158,16 +158,29 @@ def _get_python() -> str:
 
 
 class AppTrayIcon:
-    def __init__(self, app_name: str, title_filter: str = "", on_shutdown=None):
+    def __init__(
+        self,
+        app_name: str,
+        title_filter: str = "",
+        icon_override: str = "",
+        on_shutdown=None,
+    ):
         self.bus = None
         self.app_name = app_name
         self.title_filter = title_filter
+        self.icon_override = icon_override
         suffix = (
-            app_name.replace(".", "").replace("-", "_").replace(" ", "_").replace(":", "_")
+            app_name.replace(".", "")
+            .replace("-", "_")
+            .replace(" ", "_")
+            .replace(":", "_")
         )
         if title_filter:
             title_suffix = (
-                title_filter.replace(".", "").replace("-", "_").replace(" ", "_").replace(":", "_")
+                title_filter.replace(".", "")
+                .replace("-", "_")
+                .replace(" ", "_")
+                .replace(":", "_")
             )
             suffix = f"{suffix}_{title_suffix}"
         self.service_name = f"org.kde.Trayy.{suffix}"
@@ -336,6 +349,12 @@ class AppTrayIcon:
         self.visible_window = None
 
     async def _resolve_icon(self) -> tuple[str, str, bytes | None] | None:
+        if self.icon_override:
+            p = Path(self.icon_override).expanduser()
+            if p.is_file():
+                return p.name, str(p.parent), p.read_bytes()
+            logger.warning("icon override not found: %s", self.icon_override)
+            return "notification-empty", "", None
         result = self._resolve_icon_for_class(self.app_name)
         if result:
             return result
@@ -418,7 +437,12 @@ class AppTrayIcon:
         return str(best)
 
     def _resolve_icon_file(self, icon_name: str) -> Path | None:
-        """Resolve an icon name to a file path by searching icon theme directories."""
+        """Resolve an icon name or path to a theme icon file."""
+        if icon_name.startswith("/"):
+            p = Path(icon_name).expanduser()
+            if p.is_file():
+                return p
+            icon_name = p.stem
         home = Path.home()
         icon_search_dirs = [
             f"{home}/.local/share/flatpak/exports/share/icons/hicolor",
@@ -457,7 +481,9 @@ class AppTrayIcon:
 
         return None
 
-    def _find_pwa_icon_by_title(self, title: str) -> tuple[str, str, bytes | None] | None:
+    def _find_pwa_icon_by_title(
+        self, title: str
+    ) -> tuple[str, str, bytes | None] | None:
         """Resolve a Chrome PWA icon by its window title (== the PWA desktop Name)."""
         if not title:
             return None
@@ -558,7 +584,10 @@ class ManagerTrayIcon:
         self.bus = await MessageBus(bus_type=BusType.SESSION).connect()
         icon_name = self._icon_path or "application-x-executable"
         self._sni = AppSNIInterface(
-            "manager", icon_name, self.on_activate, self.on_quit,
+            "manager",
+            icon_name,
+            self.on_activate,
+            self.on_quit,
             icon_data=self._icon_data,
         )
         self._sni.title = "Trayy"
@@ -640,7 +669,7 @@ class ManagerTrayIcon:
             logger.warning("[manager] Hide All: no daemon reference")
             return
         tasks = []
-        for app_class, app_title in self._daemon.tracked_apps:
+        for app_class, app_title, _ in self._daemon.tracked_apps:
             try:
                 full = await discover_windows_full(app_class, app_title)
                 for w in full:
@@ -736,7 +765,7 @@ def _patch_kwin_metadata(dest: Path):
         )
 
 
-def _read_config() -> tuple[list[tuple[str, str]], bool, bool] | None:
+def _read_config() -> tuple[list[tuple[str, str, str]], bool, bool] | None:
     try:
         no_taskbar, no_close, apps = parse_config()
         return (apps, no_taskbar, no_close)
@@ -747,7 +776,7 @@ def _read_config() -> tuple[list[tuple[str, str]], bool, bool] | None:
 class TrayDaemon:
     def __init__(self, bus):
         self.bus = bus
-        self.tracked_apps: list[tuple[str, str]] = []
+        self.tracked_apps: list[tuple[str, str, str]] = []
         self.app_icons: dict[str, AppTrayIcon] = {}
         self._launch_locks: dict[str, asyncio.Lock] = {}
         self._window_cache: dict[str, dict] = {}
@@ -788,7 +817,7 @@ class TrayDaemon:
         logger.info("config reloaded: %d app(s)", len(self.tracked_apps))
 
     def _update_tracked_apps(
-        self, new_apps: list[tuple[str, str]]
+        self, new_apps: list[tuple[str, str, str]]
     ) -> tuple[set, set] | None:
         old_set = set(self.tracked_apps)
         new_set = set(new_apps)
@@ -796,10 +825,10 @@ class TrayDaemon:
         removed = old_set - new_set
         if not (added or removed):
             return None
-        for app_class, app_title in added:
-            self.tracked_apps.append((app_class, app_title))
-        for app_class, app_title in removed:
-            self.tracked_apps.remove((app_class, app_title))
+        for app in added:
+            self.tracked_apps.append(app)
+        for app in removed:
+            self.tracked_apps.remove(app)
         return added, removed
 
     def _update_taskbar_flag(self, new_no_taskbar: bool) -> bool:
@@ -826,24 +855,24 @@ class TrayDaemon:
 
     async def _apply_state_to_all_windows(
         self,
-        added: set[tuple[str, str]] | None = None,
-        removed: set[tuple[str, str]] | None = None,
+        added: set[tuple[str, str, str]] | None = None,
+        removed: set[tuple[str, str, str]] | None = None,
     ):
         added = added or set()
         removed = removed or set()
 
-        for app_class, app_title in removed:
+        for app_class, app_title, _ in removed:
             key = (app_class, app_title)
             icon_mgr = self.app_icons.pop(key, None)
             if icon_mgr:
                 await icon_mgr.reveal_all_windows()
                 await icon_mgr.teardown()
 
-        for app_class, app_title in added:
-            await self.on_app_launched(app_class, app_title)
+        for app_class, app_title, icon_path in added:
+            await self.on_app_launched(app_class, app_title, icon_override=icon_path)
 
         tasks = []
-        for app_class, app_title in self.tracked_apps:
+        for app_class, app_title, _ in self.tracked_apps:
             full = await discover_windows_full(app_class, app_title)
             for w in full:
                 wid = w["windowId"]
@@ -858,7 +887,11 @@ class TrayDaemon:
             await asyncio.gather(*tasks)
 
     async def on_app_launched(
-        self, app_class: str, app_title: str = "", discover: bool = True
+        self,
+        app_class: str,
+        app_title: str = "",
+        icon_override: str = "",
+        discover: bool = True,
     ):
         key = (app_class, app_title)
         async with self._lock_for(app_class):
@@ -868,7 +901,12 @@ class TrayDaemon:
                 def on_shutdown():
                     self.app_icons.pop(key, None)
 
-                icon_mgr = AppTrayIcon(app_class, app_title, on_shutdown=on_shutdown)
+                icon_mgr = AppTrayIcon(
+                    app_class,
+                    app_title,
+                    icon_override=icon_override,
+                    on_shutdown=on_shutdown,
+                )
                 await icon_mgr.setup()
                 self.app_icons[key] = icon_mgr
 
@@ -882,11 +920,13 @@ class TrayDaemon:
             "caption": ev.caption,
             "windowId": ev.win_id,
         }
-        for app_class, app_title in self.tracked_apps:
+        for app_class, app_title, icon_path in self.tracked_apps:
             if _kwin_name_matches(
                 app_class, ev.resource_class, ev.resource_name, ev.caption, app_title
             ):
-                await self.on_app_launched(app_class, app_title)
+                await self.on_app_launched(
+                    app_class, app_title, icon_override=icon_path
+                )
                 return
 
     async def on_kwin_window_removed(self, ev: WindowEvent):
@@ -908,7 +948,7 @@ class TrayDaemon:
             caption = ev.caption
 
         matched_apps = set()
-        for app_class, app_title in self.tracked_apps:
+        for app_class, app_title, _ in self.tracked_apps:
             if not _kwin_name_matches(
                 app_class, resource_class, resource_name, caption, app_title
             ):
@@ -942,7 +982,7 @@ class TrayDaemon:
                     await icon_mgr.teardown()
 
     async def on_kwin_window_minimized(self, ev: WindowEvent):
-        for app_class, app_title in self.tracked_apps:
+        for app_class, app_title, _ in self.tracked_apps:
             if not _kwin_name_matches(
                 app_class, ev.resource_class, ev.resource_name, ev.caption, app_title
             ):
@@ -955,7 +995,9 @@ class TrayDaemon:
                 await _skip_taskbar(w)
             return
 
-    async def _discover_one_app(self, app_class: str, app_title: str):
+    async def _discover_one_app(
+        self, app_class: str, app_title: str, icon_override: str = ""
+    ):
         if self._cache_ready:
             existing = [
                 w
@@ -989,25 +1031,30 @@ class TrayDaemon:
             ]
         if existing:
             logger.info("[%s] added to tray", app_class)
-            await self.on_app_launched(app_class, app_title, discover=False)
+            await self.on_app_launched(
+                app_class,
+                app_title,
+                icon_override=icon_override,
+                discover=False,
+            )
 
     async def discover_running_apps(self):
         tasks = [
-            self._discover_one_app(app_class, app_title)
-            for app_class, app_title in self.tracked_apps
+            self._discover_one_app(app_class, app_title, icon_path)
+            for app_class, app_title, icon_path in self.tracked_apps
         ]
         if tasks:
             await asyncio.gather(*tasks)
 
-    async def shutdown(self):
-        for (app_class, app_title), icon_mgr in list(self.app_icons.items()):
-            await icon_mgr.reveal_all_windows()
+    async def shutdown(self, reveal: bool = True):
+        for (_app_class, _app_title), icon_mgr in list(self.app_icons.items()):
+            if reveal:
+                await icon_mgr.reveal_all_windows()
             await icon_mgr.teardown()
 
 
 _trayd_proc: subprocess.Popen | None = None
-# Set on shutdown so the watchdog does not respawn trayyd (an orphan would
-# keep the service cgroup alive and hang systemd's stop).
+# avoid respawn on shutdown/reboot
 _shutting_down = False
 
 
@@ -1037,7 +1084,7 @@ def _trayyd_already_running() -> bool:
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        # busctl not available or timed out — assume not running
+        # busctl not available or timed out. assume not running
         return False
 
 
@@ -1066,6 +1113,15 @@ async def run_daemon(no_taskbar=True, no_close=True):
     global _NO_TASKBAR, _NO_CLOSE, _trayd_proc
     _NO_TASKBAR = no_taskbar
     _NO_CLOSE = no_close
+
+    # check for KWin Wayland session
+    r = subprocess.run(["pgrep", "-x", "kwin_wayland"], capture_output=True)
+    if r.returncode != 0:
+        logger.error(
+            "KWin not detected. Trayy requires a running KDE Plasma Wayland session"
+        )
+        return
+
     await trayy_kwin.init()
 
     if no_close:
@@ -1136,8 +1192,9 @@ async def run_daemon(no_taskbar=True, no_close=True):
 
     if _NO_TASKBAR and daemon.tracked_apps:
         by_app = await trayy_kwin.batch_discover_and_hide(
-            [(cls, t) for cls, t in daemon.tracked_apps], skip_taskbar=_NO_TASKBAR
+            [(cls, t) for cls, t, _ in daemon.tracked_apps], skip_taskbar=_NO_TASKBAR
         )
+        icon_by_key = {(cls, t): ip for cls, t, ip in daemon.tracked_apps}
         for key, windows in by_app.items():
             if not windows:
                 continue
@@ -1146,7 +1203,12 @@ async def run_daemon(no_taskbar=True, no_close=True):
             for w in windows:
                 win_id = str(w["windowId"])
                 daemon._window_cache[win_id] = w
-            await daemon.on_app_launched(app_class, app_title, discover=False)
+            await daemon.on_app_launched(
+                app_class,
+                app_title,
+                icon_override=icon_by_key.get((app_class, app_title), ""),
+                discover=False,
+            )
             # so shutdown can reveal them
             icon_key = (app_class, app_title)
             if icon_key in daemon.app_icons:
@@ -1176,8 +1238,9 @@ async def run_daemon(no_taskbar=True, no_close=True):
     stop = asyncio.get_event_loop().create_future()
 
     def handle_signal():
-        global _shutting_down
+        global _shutting_down, _system_shutdown
         _shutting_down = True
+        _system_shutdown = True
         if not stop.done():
             stop.set_result(None)
 
@@ -1206,14 +1269,14 @@ async def run_daemon(no_taskbar=True, no_close=True):
     try:
         await stop
     finally:
-        # Stop child processes first — they share the service cgroup, so
-        # they must be gone before exit even if the timed cleanup below fails.
+        # Stop child processes first. they share the service cgroup,
+        # so they must be gone before exit even if the timed cleanup below fails.
         _stop_trayyd()
         manager_icon._stop_ui_proc()
 
         async def _cleanup():
             await manager_icon.teardown()
-            await daemon.shutdown()
+            await daemon.shutdown(reveal=not _system_shutdown)
             await trayy_kwin.shutdown()
             bus.disconnect()
             PID_FILE.unlink(missing_ok=True)

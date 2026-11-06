@@ -321,8 +321,8 @@ async def ensure_kwin_window_watcher(bus: MessageBus, script_path: str,
 
         resp = await _call("loadScript", "ss", [script_path, plugin_name])
         script_id = resp.body[0] if resp and resp.body else -1
-        if script_id < 0:
-            logger.error("failed to load KWin script %s (id=%d)", plugin_name, script_id)
+        if not isinstance(script_id, int) or script_id < 0:
+            logger.error("failed to load KWin script %s: %r", plugin_name, script_id)
             return False
 
         await _call("start")
