@@ -197,8 +197,7 @@ def get() -> KWinScripting:
     return _kwin
 
 
-# Shared JS snippet for class + title matching.
-# Used by both build_discover_script and build_batch_discover_and_hide_script.
+# Shared class + title matching; used by both discover and batch scripts.
 _MATCHING_JS = """
         var classMatched = true;
         if (targetClass.length > 0) {
@@ -270,8 +269,7 @@ try {{
 """
 
 
-# Action → JS statement mapping.
-# Each value is executed inside the "if (found)" block for the matched window.
+# Action → JS statement; each runs inside the matched window's "if (found)" block.
 _ACTIONS: dict[str, str] = {
     "skipTaskbar": "w.skipTaskbar = true;",
     "skipTaskbarRemove": "w.skipTaskbar = false;",
@@ -355,11 +353,7 @@ async def close_window(window_id: str, timeout: float = 5.0) -> bool:
 def build_batch_discover_and_hide_script(
     apps: list[tuple[str, str]], skip_taskbar: bool = True
 ) -> str:
-    """Build a single KWin script that discovers AND hides all windows for multiple apps in one pass.
-
-    Returns JSON: { \"by_app\": { \"app_class\": [window_info, ...], ... } }
-    Each window_info includes windowId, title, resourceClass, resourceName, minimized, skipTaskbar, active.
-    """
+    """Build a KWin script that discovers and hides all matching windows in one pass."""
     action = (
         "w.skipTaskbar = true; w.minimized = true;"
         if skip_taskbar
@@ -379,7 +373,7 @@ def build_batch_discover_and_hide_script(
     batch_matching_js = (
         "            var targetClass = app.class;\n"
         "            var targetTitle = app.title;\n"
-        + _MATCHING_JS.replace("        ", "            ")  # indent for nested loop
+        + _MATCHING_JS.replace("        ", "            ")
     )
 
     return f"""
@@ -421,17 +415,12 @@ try {{
 async def batch_discover_and_hide(
     apps: list[tuple[str, str]], skip_taskbar: bool = True, timeout: float = 5.0
 ) -> dict[str, list[dict]]:
-    """Discover and hide all windows for all apps in a single KWin script execution.
-
-    Returns a dict mapping \"resource_class\x1ftitle\" -> [window_info, ...].
-    Each window_info is a dict with keys: windowId, title, resourceClass, resourceName, pid, minimized, skipTaskbar, active.
-    """
+    """Single KWin script pass over all apps; returns {class\x1ftitle: [window_info, ...]}."""
     kwin = get()
     js = build_batch_discover_and_hide_script(apps, skip_taskbar=skip_taskbar)
     result_str = await kwin.execute_script(js, "batch_discover_hide", timeout=timeout)
     try:
         raw = json.loads(result_str)
-        # Each value is a list of dicts; ensure windowId is a string
         cleaned = {}
         for key, windows in raw.items():
             cleaned[key] = [

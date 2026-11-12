@@ -41,7 +41,6 @@ class AppDBusMenuInterface(ServiceInterface):
     def __init__(self, app_name: str, **callbacks):
         super().__init__(MENU_IFACE)
         self.app_name = app_name
-        # Build items with callbacks bound directly in the namedtuple
         self._menu_items = [
             _MenuItem(item.label, callbacks.get(f"on_item_{iid}"))
             for iid, item in enumerate(self._MENU_ITEMS, 1)
@@ -190,8 +189,6 @@ class AppDBusMenuInterface(ServiceInterface):
 
 
 class AppMenuInterface(AppDBusMenuInterface):
-    """Per-app tray menu: Toggle, Quit."""
-
     _MENU_ITEMS = [_MenuItem("Toggle", None), _MenuItem("Quit", None)]
 
     def __init__(self, app_name: str, on_activate=None, on_quit=None):
@@ -199,8 +196,6 @@ class AppMenuInterface(AppDBusMenuInterface):
 
 
 class ManagerDBusMenuInterface(AppDBusMenuInterface):
-    """Manager tray menu: Toggle, Hide All, About, Quit."""
-
     _MENU_ITEMS = [
         _MenuItem("Toggle", None),
         _MenuItem("Hide All", None),
