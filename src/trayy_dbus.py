@@ -2,10 +2,15 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from dbus_next import Message, Variant
-from dbus_next.aio import MessageBus
-from dbus_next.service import ServiceInterface, method, PropertyAccess, dbus_property, signal as dbus_signal
-
+from dbus_fast import Message, Variant
+from dbus_fast.aio import MessageBus
+from dbus_fast.service import (
+    ServiceInterface,
+    dbus_method,
+    PropertyAccess,
+    dbus_property,
+    dbus_signal,
+)
 
 logger = logging.getLogger("trayy.dbus")
 
@@ -25,7 +30,7 @@ class WindowEvent:
 
 from collections import namedtuple
 
-_MenuItem = namedtuple('_MenuItem', ['label', 'callback'])
+_MenuItem = namedtuple("_MenuItem", ["label", "callback"])
 
 
 class AppDBusMenuInterface(ServiceInterface):
@@ -43,54 +48,59 @@ class AppDBusMenuInterface(ServiceInterface):
         ]
 
     @dbus_property(access=PropertyAccess.READ)
-    def Version(self) -> 'u':
+    def Version(self) -> "u":
         return 3
 
     @dbus_property(access=PropertyAccess.READ)
-    def Status(self) -> 's':
-        return 'normal'
+    def Status(self) -> "s":
+        return "normal"
 
     @dbus_property(access=PropertyAccess.READ)
-    def TextDirection(self) -> 's':
-        return 'ltr'
+    def TextDirection(self) -> "s":
+        return "ltr"
 
     @dbus_property(access=PropertyAccess.READ)
-    def IconThemePath(self) -> 'as':
+    def IconThemePath(self) -> "as":
         return []
 
-    @method()
-    def GetProperty(self, itemId: 'i', propertyName: 's') -> 'v':
+    @dbus_method()
+    def GetProperty(self, itemId: "i", propertyName: "s") -> "v":
         item = self._item_props(itemId)
         if item is None:
-            return Variant('s', '')
+            return Variant("s", "")
         val = item.get(propertyName)
         if val is None:
-            return Variant('s', '')
-        sig = 'b' if isinstance(val, bool) else 's'
+            return Variant("s", "")
+        sig = "b" if isinstance(val, bool) else "s"
         return Variant(sig, val)
 
-    @method()
-    def GetGroupProperties(self, itemIds: 'ai', propertyNames: 'as') -> 'a{ia{sv}}':
+    @dbus_method()
+    def GetGroupProperties(self, itemIds: "ai", propertyNames: "as") -> "a{ia{sv}}":
         result = {}
         for iid in itemIds:
             props = {}
             for pn in propertyNames:
                 item = self._item_props(iid)
                 if item and pn in item:
-                    props[pn] = Variant('s' if pn in ('type', 'label', 'action') else 'b', item[pn])
+                    props[pn] = Variant(
+                        "s" if pn in ("type", "label", "action") else "b", item[pn]
+                    )
             result[iid] = props
         return result
 
-    @method()
-    def GetAll(self, itemId: 'i', parentCheck: 'b') -> 'a{sv}':
+    @dbus_method()
+    def GetAll(self, itemId: "i", parentCheck: "b") -> "a{sv}":
         item = self._item_props(itemId)
         if item is None:
             return {}
-        return {k: Variant('s' if k in ('type', 'label', 'action') else 'b', v) for k, v in item.items()}
+        return {
+            k: Variant("s" if k in ("type", "label", "action") else "b", v)
+            for k, v in item.items()
+        }
 
-    @method()
-    def Event(self, itemId: 'i', eventId: 's', data: 'v', timestamp: 'u'):
-        if eventId not in ('selected', 'clicked', '2', 'action'):
+    @dbus_method()
+    def Event(self, itemId: "i", eventId: "s", data: "v", timestamp: "u"):
+        if eventId not in ("selected", "clicked", "2", "action"):
             return
         if itemId <= 0:
             return
@@ -99,17 +109,21 @@ class AppDBusMenuInterface(ServiceInterface):
             if callback:
                 asyncio.create_task(callback())
 
-    @method()
-    def EventGroup(self, events: 'a(iiavasv)'):
+    @dbus_method()
+    def EventGroup(self, events: "a(iiavasv)"):
         pass
 
     @staticmethod
     def _to_variant_props(props: dict) -> dict:
-        return {k: Variant('b' if v is True or v is False else 's', v)
-                for k, v in props.items()}
+        return {
+            k: Variant("b" if v is True or v is False else "s", v)
+            for k, v in props.items()
+        }
 
-    @method()
-    def GetLayout(self, parentId: 'i', recursionDepth: 'i', propertyNames: 'as') -> 'u(ia{sv}av)':
+    @dbus_method()
+    def GetLayout(
+        self, parentId: "i", recursionDepth: "i", propertyNames: "as"
+    ) -> "u(ia{sv}av)":
         revision = 1
         root_data = self._item_props(0)
         if root_data is None:
@@ -124,7 +138,7 @@ class AppDBusMenuInterface(ServiceInterface):
                 if child_data is None:
                     continue
                 child_props = self._to_variant_props(child_data)
-                children.append(Variant('(ia{sv}av)', [iid, child_props, []]))
+                children.append(Variant("(ia{sv}av)", [iid, child_props, []]))
             return [revision, [0, root_props, children]]
         for iid in range(1, len(self._menu_items) + 1):
             if parentId == iid:
@@ -135,39 +149,42 @@ class AppDBusMenuInterface(ServiceInterface):
                 return [revision, [iid, child_props, []]]
         return [revision, [parentId, {}, []]]
 
-    @method()
-    def AboutToShow(self, itemId: 'i') -> 'b':
+    @dbus_method()
+    def AboutToShow(self, itemId: "i") -> "b":
         return False
 
-    @method()
-    def AboutToShowGroup(self, itemIds: 'ai') -> 'ai':
+    @dbus_method()
+    def AboutToShowGroup(self, itemIds: "ai") -> "ai":
         return []
 
     @dbus_signal()
-    def ItemActivationRequested(self): pass
+    def ItemActivationRequested(self):
+        pass
 
     @dbus_signal()
-    def ItemsPropertiesUpdated(self): pass
+    def ItemsPropertiesUpdated(self):
+        pass
 
     @dbus_signal()
-    def LayoutUpdated(self): pass
+    def LayoutUpdated(self):
+        pass
 
     def _item_props(self, itemId: int):
         if itemId == 0:
             return {
-                'type': 'standard',
-                'label': self.app_name.title(),
-                'visible': True,
-                'enabled': True,
-                'children-display': 'submenu',
+                "type": "standard",
+                "label": self.app_name.title(),
+                "visible": True,
+                "enabled": True,
+                "children-display": "submenu",
             }
         if 1 <= itemId <= len(self._menu_items):
             label = self._menu_items[itemId - 1].label
             return {
-                'type': 'standard',
-                'label': label,
-                'visible': True,
-                'enabled': True,
+                "type": "standard",
+                "label": label,
+                "visible": True,
+                "enabled": True,
             }
         return None
 
@@ -192,16 +209,28 @@ class ManagerDBusMenuInterface(AppDBusMenuInterface):
     ]
 
     def __init__(self, on_activate=None, on_hide_all=None, on_about=None, on_quit=None):
-        super().__init__('Trayy', on_item_1=on_activate, on_item_2=on_hide_all,
-                         on_item_3=on_about, on_item_4=on_quit)
+        super().__init__(
+            "Trayy",
+            on_item_1=on_activate,
+            on_item_2=on_hide_all,
+            on_item_3=on_about,
+            on_item_4=on_quit,
+        )
 
 
 class AppSNIInterface(ServiceInterface):
-    def __init__(self, app_name: str, icon_name: str, on_activate, on_quit,
-                 icon_theme_path: str = '', icon_data: bytes | None = None):
+    def __init__(
+        self,
+        app_name: str,
+        icon_name: str,
+        on_activate,
+        on_quit,
+        icon_theme_path: str = "",
+        icon_data: bytes | None = None,
+    ):
         super().__init__(SNI_IFACE)
         self.app_name = app_name
-        self.icon_name = icon_name if icon_name else 'application-x-executable'
+        self.icon_name = icon_name if icon_name else "application-x-executable"
         self.icon_theme_path = icon_theme_path
         self.title = app_name.title()
         self._on_activate = on_activate
@@ -213,6 +242,7 @@ class AppSNIInterface(ServiceInterface):
         try:
             from PIL import Image
             import io
+
             img = Image.open(io.BytesIO(icon_data)).convert("RGBA")
             w, h = img.size
             raw = img.tobytes("raw", "RGBA")
@@ -221,63 +251,63 @@ class AppSNIInterface(ServiceInterface):
             return []
 
     @dbus_property(access=PropertyAccess.READ)
-    def Id(self) -> 's':
-        return f'trayy-{self.app_name}'
+    def Id(self) -> "s":
+        return f"trayy-{self.app_name}"
 
     @dbus_property(access=PropertyAccess.READ)
-    def Status(self) -> 's':
-        return 'Active'
+    def Status(self) -> "s":
+        return "Active"
 
     @dbus_property(access=PropertyAccess.READ)
-    def Title(self) -> 's':
+    def Title(self) -> "s":
         return self.title
 
     @dbus_property(access=PropertyAccess.READ)
-    def IconName(self) -> 's':
+    def IconName(self) -> "s":
         return self.icon_name
 
     @dbus_property(access=PropertyAccess.READ)
-    def Icon(self) -> 'a(iiay)':
+    def Icon(self) -> "a(iiay)":
         return self._icon_pixels
 
     @dbus_property(access=PropertyAccess.READ)
-    def IconThemePath(self) -> 's':
+    def IconThemePath(self) -> "s":
         return self.icon_theme_path
 
     @dbus_property(access=PropertyAccess.READ)
-    def Tooltips(self) -> 'a{ss}':
-        return {'title': self.title, 'icon_name': ''}
+    def Tooltips(self) -> "a{ss}":
+        return {"title": self.title, "icon_name": ""}
 
     @dbus_property(access=PropertyAccess.READ)
-    def Menu(self) -> 'o':
-        return '/StatusNotifierItem/menu'
+    def Menu(self) -> "o":
+        return "/StatusNotifierItem/menu"
 
     @dbus_property(access=PropertyAccess.READ)
-    def XAyatanaLabel(self) -> 's':
+    def XAyatanaLabel(self) -> "s":
         return self.title
 
-    @method()
-    def Activate(self, x: 'i', y: 'i'):
+    @dbus_method()
+    def Activate(self, x: "i", y: "i"):
         asyncio.create_task(self._on_activate(x, y))
 
-    @method()
-    def SecondaryActivate(self, x: 'i', y: 'i'):
+    @dbus_method()
+    def SecondaryActivate(self, x: "i", y: "i"):
         pass
 
-    @method()
-    def ContextMenu(self, x: 'i', y: 'i'):
+    @dbus_method()
+    def ContextMenu(self, x: "i", y: "i"):
         pass
 
-    @method()
-    def XAyatanaSecondaryActivate(self, timestamp: 'u'):
+    @dbus_method()
+    def XAyatanaSecondaryActivate(self, timestamp: "u"):
         pass
 
-    @method()
-    def ProvideXdgActivationToken(self, appId: 's') -> 's':
+    @dbus_method()
+    def ProvideXdgActivationToken(self, appId: "s") -> "s":
         return appId
 
-    @method()
-    def Scroll(self, delta: 'i', orientation: 's'):
+    @dbus_method()
+    def Scroll(self, delta: "i", orientation: "s"):
         pass
 
 
@@ -288,30 +318,42 @@ class KWinWindowWatcherInterface(ServiceInterface):
         self._on_window_removed = on_window_removed
         self._on_window_minimized = on_window_minimized
 
-    @method()
-    def WindowAdded(self, resourceClass: 's', resourceName: 's', caption: 's', winId: 's'):
+    @dbus_method()
+    def WindowAdded(
+        self, resourceClass: "s", resourceName: "s", caption: "s", winId: "s"
+    ):
         ev = WindowEvent(resourceClass, resourceName, caption, winId)
         asyncio.create_task(self._on_window_added(ev))
 
-    @method()
-    def WindowRemoved(self, resourceClass: 's', resourceName: 's', caption: 's', winId: 's'):
+    @dbus_method()
+    def WindowRemoved(
+        self, resourceClass: "s", resourceName: "s", caption: "s", winId: "s"
+    ):
         ev = WindowEvent(resourceClass, resourceName, caption, winId)
         asyncio.create_task(self._on_window_removed(ev))
 
-    @method()
-    def WindowMinimized(self, resourceClass: 's', resourceName: 's', caption: 's', winId: 's'):
+    @dbus_method()
+    def WindowMinimized(
+        self, resourceClass: "s", resourceName: "s", caption: "s", winId: "s"
+    ):
         ev = WindowEvent(resourceClass, resourceName, caption, winId)
         asyncio.create_task(self._on_window_minimized(ev))
 
 
-async def ensure_kwin_window_watcher(bus: MessageBus, script_path: str,
-                                      plugin_name: str = "trayy-window-watcher") -> bool:
+async def ensure_kwin_window_watcher(
+    bus: MessageBus, script_path: str, plugin_name: str = "trayy-window-watcher"
+) -> bool:
     def _call(member: str, signature: str = "", body=None):
-        return bus.call(Message(
-            destination="org.kde.KWin", path="/Scripting",
-            interface="org.kde.kwin.Scripting", member=member,
-            signature=signature, body=body or [],
-        ))
+        return bus.call(
+            Message(
+                destination="org.kde.KWin",
+                path="/Scripting",
+                interface="org.kde.kwin.Scripting",
+                member=member,
+                signature=signature,
+                body=body or [],
+            )
+        )
 
     try:
         try:

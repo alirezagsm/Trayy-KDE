@@ -5,8 +5,8 @@ import os
 import tempfile
 from typing import Optional
 
-from dbus_next import BusType, Message, MessageType
-from dbus_next.aio import MessageBus
+from dbus_fast import BusType, Message, MessageType
+from dbus_fast.aio import MessageBus
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class KWinScripting:
             signature="s",
             body=[match_rule],
         )
-        await self.bus.send(add_match_msg)
+        await self.bus.call(add_match_msg)
 
     async def disconnect(self):
         if self.bus:
@@ -46,9 +46,11 @@ class KWinScripting:
                 pass
 
     def _on_callback(self, msg: Message) -> bool:
-        if (msg.message_type != MessageType.METHOD_CALL or
-                msg.destination != self.bus.unique_name or
-                not msg.member):
+        if (
+            msg.message_type != MessageType.METHOD_CALL
+            or msg.destination != self.bus.unique_name
+            or not msg.member
+        ):
             return False
 
         callback_key = msg.member
@@ -62,7 +64,9 @@ class KWinScripting:
         self._pending_events[member] = event
         return event
 
-    async def _wait_for_callback(self, member: str, event: asyncio.Event, timeout: float = 5.0) -> str:
+    async def _wait_for_callback(
+        self, member: str, event: asyncio.Event, timeout: float = 5.0
+    ) -> str:
         try:
             await asyncio.wait_for(event.wait(), timeout=timeout)
             result = self._pending_results.pop(member, "")
@@ -73,8 +77,9 @@ class KWinScripting:
         finally:
             self._pending_events.pop(member, None)
 
-    def _make_method_call(self, service: str, path: str, iface: str,
-                          member: str, signature: str, *body) -> Message:
+    def _make_method_call(
+        self, service: str, path: str, iface: str, member: str, signature: str, *body
+    ) -> Message:
         return Message(
             destination=service,
             path=path,
@@ -86,16 +91,25 @@ class KWinScripting:
 
     async def kwin_load_script(self, script_path: str, script_name: str) -> int:
         msg = self._make_method_call(
-            KWIN_SERVICE, KWIN_SCRIPTING_PATH, KWIN_SCRIPTING_IFACE,
-            "loadScript", "ss", script_path, script_name
+            KWIN_SERVICE,
+            KWIN_SCRIPTING_PATH,
+            KWIN_SCRIPTING_IFACE,
+            "loadScript",
+            "ss",
+            script_path,
+            script_name,
         )
         reply = await self.bus.call(msg)
         return reply.body[0]
 
     async def kwin_unload_script(self, script_name: str):
         msg = self._make_method_call(
-            KWIN_SERVICE, KWIN_SCRIPTING_PATH, KWIN_SCRIPTING_IFACE,
-            "unloadScript", "s", script_name
+            KWIN_SERVICE,
+            KWIN_SCRIPTING_PATH,
+            KWIN_SCRIPTING_IFACE,
+            "unloadScript",
+            "s",
+            script_name,
         )
         await self.bus.call(msg)
 
@@ -121,8 +135,9 @@ class KWinScripting:
         safe_prefix = prefix.replace(".", "_").replace(" ", "_").replace("-", "_")
         return f"{safe_prefix}_{self._callback_counter}"
 
-    async def execute_script(self, js_content: str, callback_prefix: str,
-                             timeout: float = 5.0) -> str:
+    async def execute_script(
+        self, js_content: str, callback_prefix: str, timeout: float = 5.0
+    ) -> str:
         async with self._execute_lock:
             unique_name = self.bus.unique_name
             callback_name = self._next_callback_name(callback_prefix)
@@ -146,7 +161,9 @@ class KWinScripting:
                 try:
                     callback_event = self._register_callback(callback_name)
                     await self.kwin_run_script(script_id)
-                    result = await self._wait_for_callback(callback_name, callback_event, timeout=timeout)
+                    result = await self._wait_for_callback(
+                        callback_name, callback_event, timeout=timeout
+                    )
                     return result
                 finally:
                     await self.kwin_stop_script(script_id)
@@ -155,6 +172,7 @@ class KWinScripting:
                     os.unlink(script_path)
                 except OSError:
                     pass
+
 
 _kwin: Optional[KWinScripting] = None
 
@@ -217,8 +235,12 @@ _MATCHING_JS = """
 
 def build_discover_script(resource_class: str, title: str = "") -> str:
     escaped_title = title.replace("\\", "\\\\").replace('"', '\\"') if title else ""
-    escaped_class = resource_class.replace("\\", "\\\\").replace('"', '\\"') if resource_class else ""
-    return f'''
+    escaped_class = (
+        resource_class.replace("\\", "\\\\").replace('"', '\\"')
+        if resource_class
+        else ""
+    )
+    return f"""
 try {{
     var targetClass = "{escaped_class}";
     var targetTitle = "{escaped_title}";
@@ -245,18 +267,18 @@ try {{
 }} catch(e) {{
     callDBus("__UNIQUE_NAME__", "/", "", "__CALLBACK_NAME__", "ERROR:" + e);
 }}
-'''
+"""
 
 
 # Action → JS statement mapping.
 # Each value is executed inside the "if (found)" block for the matched window.
 _ACTIONS: dict[str, str] = {
-    "skipTaskbar":       "w.skipTaskbar = true;",
+    "skipTaskbar": "w.skipTaskbar = true;",
     "skipTaskbarRemove": "w.skipTaskbar = false;",
-    "close":             "w.closeWindow();",
-    "reveal":            "w.skipTaskbar = false; w.minimized = false;",
-    "hide":              "w.skipTaskbar = true; w.minimized = true;",
-    "showAndActivate":   "w.skipTaskbar = false; w.minimized = false; w.desktops = [workspace.currentDesktop]; workspace.activeWindow = w; w.raise();",
+    "close": "w.closeWindow();",
+    "reveal": "w.skipTaskbar = false; w.minimized = false;",
+    "hide": "w.skipTaskbar = true; w.minimized = true;",
+    "showAndActivate": "w.skipTaskbar = false; w.minimized = false; w.desktops = [workspace.currentDesktop]; workspace.activeWindow = w; w.raise();",
 }
 
 
@@ -265,7 +287,7 @@ def build_action_script(window_id: str, action: str) -> str:
     if js_stmt is None:
         raise ValueError(f"Unknown action: {action!r}")
     safe_id = window_id.replace("\\", "\\\\").replace('"', '\\"')
-    return f'''
+    return f"""
 try {{
     var targetId = "{safe_id}";
     var windows = workspace.windowList();
@@ -282,13 +304,17 @@ try {{
 }} catch(e) {{
     callDBus("__UNIQUE_NAME__", "/", "", "__CALLBACK_NAME__", "ERROR:" + e);
 }}
-'''
+"""
 
 
-async def discover_windows(resource_class: str, title: str = "", timeout: float = 5.0) -> list[dict]:
+async def discover_windows(
+    resource_class: str, title: str = "", timeout: float = 5.0
+) -> list[dict]:
     kwin = get()
     js = build_discover_script(resource_class, title)
-    result_str = await kwin.execute_script(js, f"discover_{resource_class}", timeout=timeout)
+    result_str = await kwin.execute_script(
+        js, f"discover_{resource_class}", timeout=timeout
+    )
 
     windows = []
     for entry in result_str.split("\x1f"):
@@ -326,18 +352,28 @@ async def close_window(window_id: str, timeout: float = 5.0) -> bool:
     return await _window_action(window_id, "close", timeout=timeout)
 
 
-def build_batch_discover_and_hide_script(apps: list[tuple[str, str]], skip_taskbar: bool = True) -> str:
+def build_batch_discover_and_hide_script(
+    apps: list[tuple[str, str]], skip_taskbar: bool = True
+) -> str:
     """Build a single KWin script that discovers AND hides all windows for multiple apps in one pass.
 
     Returns JSON: { \"by_app\": { \"app_class\": [window_info, ...], ... } }
     Each window_info includes windowId, title, resourceClass, resourceName, minimized, skipTaskbar, active.
     """
-    action = "w.skipTaskbar = true; w.minimized = true;" if skip_taskbar else "w.minimized = true;"
+    action = (
+        "w.skipTaskbar = true; w.minimized = true;"
+        if skip_taskbar
+        else "w.minimized = true;"
+    )
 
-    apps_js = "[" + ", ".join(
-        f'{{class: "{cls.replace("\\", "\\\\").replace('"', '\\"')}", title: "{t.replace("\\", "\\\\").replace('"', '\\"')}"}}'
-        for cls, t in apps
-    ) + "]"
+    apps_js = (
+        "["
+        + ", ".join(
+            f'{{class: "{cls.replace("\\", "\\\\").replace('"', '\\"')}", title: "{t.replace("\\", "\\\\").replace('"', '\\"')}"}}'
+            for cls, t in apps
+        )
+        + "]"
+    )
 
     # Reuse _MATCHING_JS with "app.class" / "app.title" as targetClass/targetTitle
     batch_matching_js = (
@@ -346,7 +382,7 @@ def build_batch_discover_and_hide_script(apps: list[tuple[str, str]], skip_taskb
         + _MATCHING_JS.replace("        ", "            ")  # indent for nested loop
     )
 
-    return f'''
+    return f"""
 try {{
     var apps = {apps_js};
     var byApp = {{}};
@@ -379,10 +415,12 @@ try {{
 }} catch(e) {{
     callDBus("__UNIQUE_NAME__", "/", "", "__CALLBACK_NAME__", "ERROR:" + e);
 }}
-'''
+"""
 
 
-async def batch_discover_and_hide(apps: list[tuple[str, str]], skip_taskbar: bool = True, timeout: float = 5.0) -> dict[str, list[dict]]:
+async def batch_discover_and_hide(
+    apps: list[tuple[str, str]], skip_taskbar: bool = True, timeout: float = 5.0
+) -> dict[str, list[dict]]:
     """Discover and hide all windows for all apps in a single KWin script execution.
 
     Returns a dict mapping \"resource_class\x1ftitle\" -> [window_info, ...].
@@ -396,15 +434,18 @@ async def batch_discover_and_hide(apps: list[tuple[str, str]], skip_taskbar: boo
         # Each value is a list of dicts; ensure windowId is a string
         cleaned = {}
         for key, windows in raw.items():
-            cleaned[key] = [{"windowId": str(w.get("windowId", "")), **w} for w in windows]
+            cleaned[key] = [
+                {"windowId": str(w.get("windowId", "")), **w} for w in windows
+            ]
         return cleaned
     except json.JSONDecodeError:
-        logger.warning("batch_discover_and_hide: failed to parse result: %s", result_str)
+        logger.warning(
+            "batch_discover_and_hide: failed to parse result: %s", result_str
+        )
         return {}
 
 
-async def _window_action(window_id: str, action: str,
-                         timeout: float = 5.0) -> bool:
+async def _window_action(window_id: str, action: str, timeout: float = 5.0) -> bool:
     kwin = get()
     js = build_action_script(window_id, action)
     result = await kwin.execute_script(js, f"action_{action}", timeout=timeout)

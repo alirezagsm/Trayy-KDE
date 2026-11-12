@@ -8,9 +8,8 @@ import zipfile
 from pathlib import Path
 from typing import Optional
 
-from dbus_next import Message, MessageType
-from dbus_next.aio import MessageBus
-from dbus_next.constants import BusType
+from dbus_fast import Message, MessageType, BusType
+from dbus_fast.aio import MessageBus
 
 from trayy import (
     SRC_DIR,
@@ -151,7 +150,7 @@ def _get_icon_path(
 
 
 def _get_python() -> str:
-    venv_python = SRC_DIR.parent / ".venv" / "bin" / "python3"
+    venv_python = SRC_DIR / ".venv" / "bin" / "python3"
     if venv_python.exists():
         return str(venv_python)
     return "python3"
@@ -1056,6 +1055,7 @@ class TrayDaemon:
 _trayd_proc: subprocess.Popen | None = None
 # avoid respawn on shutdown/reboot
 _shutting_down = False
+_system_shutdown = False
 
 
 def _stop_trayyd():
@@ -1150,8 +1150,17 @@ async def run_daemon(no_taskbar=True, no_close=True):
         return True
 
     bus.add_message_handler(_on_trayd_minimize_signal)
-    bus._add_match_rule(
-        "type='signal',sender='org.trayy.Daemon',path='/org/trayy/Daemon',interface='org.trayy.Daemon',member='MinimizeWindow'"
+    await bus.call(
+        Message(
+            destination="org.freedesktop.DBus",
+            path="/org/freedesktop/DBus",
+            interface="org.freedesktop.DBus",
+            member="AddMatch",
+            signature="s",
+            body=[
+                "type='signal',sender='org.trayy.Daemon',path='/org/trayy/Daemon',interface='org.trayy.Daemon',member='MinimizeWindow'"
+            ],
+        )
     )
 
     # Watch for trayyd dying (e.g. after sleep/wake) via D-Bus NameOwnerChanged signal
@@ -1173,8 +1182,17 @@ async def run_daemon(no_taskbar=True, no_close=True):
         return False
 
     bus.add_message_handler(_on_trayd_name_owner_changed)
-    bus._add_match_rule(
-        "type='signal',sender='org.freedesktop.DBus',member='NameOwnerChanged',path='/org/freedesktop/DBus',interface='org.freedesktop.DBus'"
+    await bus.call(
+        Message(
+            destination="org.freedesktop.DBus",
+            path="/org/freedesktop/DBus",
+            interface="org.freedesktop.DBus",
+            member="AddMatch",
+            signature="s",
+            body=[
+                "type='signal',sender='org.freedesktop.DBus',member='NameOwnerChanged',path='/org/freedesktop/DBus',interface='org.freedesktop.DBus'"
+            ],
+        )
     )
 
     daemon = TrayDaemon(bus)
