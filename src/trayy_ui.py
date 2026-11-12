@@ -206,6 +206,7 @@ class AppRow(QWidget):
         self._label.setStyleSheet("font-size: 14px; padding: 6px;")
         self._label.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self._label.setToolTip(display_name)
+        self._label.setMinimumWidth(40)
         self._label.setMaximumWidth(250)
         layout.addWidget(self._label, stretch=1)
 
@@ -295,6 +296,7 @@ class AppRow(QWidget):
         self._editing = True
         self._edit = QLineEdit(format_app(self.app))
         self._edit.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self._edit.setMinimumWidth(40)
         self._edit.setStyleSheet("font-size: 14px; padding: 6px;")
         idx = self.layout().indexOf(self._label)
         self.layout().replaceWidget(self._label, self._edit)
