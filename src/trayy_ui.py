@@ -35,14 +35,16 @@ from trayy import (
     VERSION as CURRENT_VERSION,
     REPO_URL,
     ICONPATH_PREFIX,
+    QT_ICON_SIZE,
+    find_desktop_by_class,
+    find_desktop_by_title,
+    find_theme_icon,
     parse_config,
+    read_desktop_field,
 )
 import trayy_update
 
 logger = logging.getLogger("trayy.ui")
-
-# Rasterize theme icons at this size; _update_icon scales down to display.
-_ICON_SOURCE = 64
 
 
 def format_app(app: tuple[str, ...]) -> str:
@@ -71,41 +73,17 @@ def save_config(no_taskbar: bool, no_close: bool, apps: list[tuple[str, ...]]):
     CONFIG_FILE.write_text("\n".join(lines) + ("\n" if lines else ""))
 
 
-def _resolve_icon_pixmap(
-    icon_ref: str, app_class: str = "", title: str = ""
-) -> QPixmap | None:
-    """Resolve an icon path or theme name to a pixmap; None if not found."""
+def _resolve_icon_pixmap(icon_ref: str) -> QPixmap | None:
     if not icon_ref:
         return None
-    p = Path(icon_ref).expanduser()
-    if p.is_file():
-        pm = QPixmap(str(p))
-        return pm if not pm.isNull() else None
-    home = Path.home()
-    icon_search_dirs = [
-        f"{home}/.local/share/flatpak/exports/share/icons/hicolor",
-        "/var/lib/flatpak/exports/share/icons/hicolor",
-        "/usr/share/icons/hicolor",
-        "/usr/share/icons/breeze",
-        f"{home}/.local/share/icons/hicolor",
-    ]
-    preferred_sizes = ["48x48", "64x64", "32x32", "128x128", "96x96", "24x24"]
-    for icon_dir in icon_search_dirs:
-        base = Path(icon_dir)
-        if not base.exists():
-            continue
-        for size in preferred_sizes:
-            apps_dir = base / size / "apps"
-            if not apps_dir.is_dir():
-                continue
-            for ext in (".png", ".svg"):
-                candidate = apps_dir / (icon_ref + ext)
-                if candidate.is_file():
-                    pm = QPixmap(str(candidate))
-                    return pm if not pm.isNull() else None
+    icon_file = find_theme_icon(icon_ref)
+    if icon_file is not None:
+        pm = QPixmap(str(icon_file))
+        if not pm.isNull():
+            return pm
     theme_icon = QIcon.fromTheme(icon_ref)
     if not theme_icon.isNull():
-        return theme_icon.pixmap(_ICON_SOURCE, _ICON_SOURCE)
+        return theme_icon.pixmap(QT_ICON_SIZE, QT_ICON_SIZE)
     return None
 
 
@@ -121,63 +99,24 @@ def notify_daemon_reload():
 
 
 def _placeholder_icon_pixmap() -> QPixmap | None:
-    """Generic placeholder icon."""
     theme_icon = QIcon.fromTheme("notification-empty")
     if theme_icon.isNull():
         return None
-    return theme_icon.pixmap(_ICON_SOURCE, _ICON_SOURCE)
-
-
-def _read_desktop_field(path: Path, field: str) -> str:
-    try:
-        for line in path.read_text().splitlines():
-            if line.startswith(field + "="):
-                return line.split("=", 1)[1].strip()
-    except OSError:
-        pass
-    return ""
+    return theme_icon.pixmap(QT_ICON_SIZE, QT_ICON_SIZE)
 
 
 def _icon_from_desktop_file(path: Path) -> QPixmap | None:
-    icon_ref = _read_desktop_field(path, "Icon")
+    icon_ref = read_desktop_field(path, "Icon")
     if not icon_ref:
         return None
-    pm = _resolve_icon_pixmap(icon_ref)
-    if pm is not None:
-        return pm
-    if icon_ref.startswith("/"):
-        return _resolve_icon_pixmap(Path(icon_ref).stem)
-    return None
+    return _resolve_icon_pixmap(icon_ref)
 
 
 def _auto_discover_icon(app_class: str, title: str) -> QPixmap | None:
-    """Find an app's icon from desktop files by class and title."""
-    home = Path.home()
-    search_dirs = [
-        f"{home}/.local/share/applications",
-        "/usr/share/applications",
-        f"{home}/.local/share/flatpak/exports/share/applications",
-        "/var/lib/flatpak/exports/share/applications",
-    ]
-    cls_l = app_class.lstrip(".").lower()
-    candidates: list[Path] = []
-    for sd in search_dirs:
-        base = Path(sd)
-        if not base.is_dir():
-            continue
-        for f in base.glob("*.desktop"):
-            stem_l = f.stem.lower()
-            if cls_l and cls_l in stem_l:
-                candidates.append(f)
-    if title:
-        for f in candidates:
-            if _read_desktop_field(f, "Name") == title:
-                pm = _icon_from_desktop_file(f)
-                if pm is not None:
-                    return pm
-    if candidates:
-        best = min(candidates, key=lambda f: len(f.stem))
-        return _icon_from_desktop_file(best)
+    for f in (*find_desktop_by_title(title), *find_desktop_by_class(app_class)):
+        pm = _icon_from_desktop_file(f)
+        if pm is not None:
+            return pm
     return None
 
 
@@ -435,7 +374,6 @@ class TrayyManagerWindow(QMainWindow):
         root = QVBoxLayout(central)
         root.setSpacing(4)
 
-        # Update button. shown at the top when a newer release exists
         if self._update_available:
             update_btn = QPushButton("⬆  Update Available")
             update_btn.setStyleSheet(
@@ -446,7 +384,6 @@ class TrayyManagerWindow(QMainWindow):
             update_btn.clicked.connect(self._on_update_click)
             root.addWidget(update_btn)
 
-        # Manager UI (main content)
         self._manager_widget = QWidget()
         self._manager_layout = QVBoxLayout(self._manager_widget)
         self._manager_layout.setContentsMargins(0, 0, 0, 0)
@@ -456,7 +393,6 @@ class TrayyManagerWindow(QMainWindow):
         settings_layout.setContentsMargins(0, 0, 0, 0)
         settings_layout.setSpacing(4)
 
-        # First row: checkbox + help button inline
         top_row = QHBoxLayout()
         top_row.setContentsMargins(0, 0, 0, 0)
         top_row.setSpacing(4)
@@ -529,7 +465,6 @@ class TrayyManagerWindow(QMainWindow):
 
         root.addWidget(self._manager_widget)
 
-        # Help overlay; covers the entire window when shown
         self._help_widget = QWidget()
         self._help_widget.setStyleSheet("background-color: #1e1e1e;")
         self._help_layout = QVBoxLayout(self._help_widget)
@@ -556,7 +491,6 @@ class TrayyManagerWindow(QMainWindow):
         help_content_layout.setContentsMargins(0, 0, 0, 0)
         help_content_layout.setSpacing(6)
 
-        # Options
         self._add_help_text(
             help_content_layout, "Options:", bullet=False, color=self._highlight_color
         )
@@ -571,7 +505,6 @@ class TrayyManagerWindow(QMainWindow):
             "Clicking the X button will minimize the app to the system tray instead of closing it.",
         )
 
-        # App List Rules
         self._add_help_text(
             help_content_layout,
             "App List Rules:",
@@ -599,7 +532,6 @@ class TrayyManagerWindow(QMainWindow):
             "Matching is a case-sensitive substring match. You can prefix app_class and/or window_title with regex: to use a regular expression instead (e.g. kwrite regex:^Daily Notes).",
         )
 
-        # App Icons
         self._add_help_text(
             help_content_layout,
             "App Icons:",
@@ -772,8 +704,7 @@ class TrayyManagerWindow(QMainWindow):
             self._update_worker = None
             return
 
-        # Relaunch the new version after this process exits. The relauncher is
-        # detached so it survives the daemon shutdown that terminates us.
+        # Detached relauncher survives the daemon shutdown that terminates this process.
         pyz = SRC_DIR / "trayy.pyz"
         relauncher = (
             f"(sleep 2 && {shlex.quote(str(pyz))} >/dev/null 2>&1 &)"
@@ -825,7 +756,6 @@ class TrayyManagerWindow(QMainWindow):
 
 
 def _check_update_sync() -> bool:
-    """Quick synchronous update check via urllib (no async needed for UI)."""
     try:
         import json, urllib.request
 
@@ -841,7 +771,6 @@ def _check_update_sync() -> bool:
 
 
 def run_ui():
-    """Entry point for launching the UI — called by trayy.py or directly."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
     update_available = _check_update_sync()

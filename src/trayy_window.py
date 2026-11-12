@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import shutil
 import signal as sigmod
 import subprocess
@@ -18,6 +19,9 @@ from trayy import (
     TRAYD_BINARY,
     VERSION as version,
     REPO_URL,
+    desktop_icon_path,
+    find_desktop_by_class,
+    find_desktop_by_title,
     parse_config,
 )
 from trayy_dbus import (
@@ -106,15 +110,12 @@ async def _unregister_sni(bus: MessageBus, service_name: str):
 
 
 def _get_icon_bytes(update_available: bool = False) -> bytes | None:
-    """Read the manager logo from inside the zipapp, or fall back to filesystem."""
     png_name = "logo_update.png" if update_available else "logo.png"
-    # Read directly from the zipapp that contains this code
     try:
         with zipfile.ZipFile(SRC_DIR / "trayy.pyz") as zf:
             return zf.read(f"media/{png_name}")
     except (FileNotFoundError, KeyError):
         pass
-    # Dev mode: filesystem path alongside the source tree
     png = SRC_DIR.parent / "media" / png_name
     if png.exists():
         return png.read_bytes()
@@ -124,17 +125,12 @@ def _get_icon_bytes(update_available: bool = False) -> bytes | None:
 def _get_icon_path(
     update_available: bool = False, data: bytes | None = None
 ) -> str | None:
-    """Return a path Plasma can load, or None.
-
-    Falls back to extracting the embedded PNG to ~/.cache/trayy/ when
-    media/ is absent, because Plasma renders IconName, not raw Icon pixels.
-    """
+    """Path Plasma can load; extracts the embedded logo to ~/.cache/trayy/ when media/ is absent."""
     png_name = "logo_update.png" if update_available else "logo.png"
     png = SRC_DIR.parent / "media" / png_name
     if png.exists():
         return str(png)
 
-    # Fallback: extract the embedded PNG to a cache file
     if data is None:
         data = _get_icon_bytes(update_available)
     if data is None:
@@ -229,7 +225,6 @@ class AppTrayIcon:
         if not self.windows:
             await self.discover_and_hide_windows()
         if not self.windows:
-            # launch new instance
             launched = await self._try_launch_app()
             if launched:
                 await self.discover_and_hide_windows()
@@ -240,7 +235,6 @@ class AppTrayIcon:
         fresh_ids = [w["windowId"] for w in full]
         self.windows = list(dict.fromkeys(self.windows + fresh_ids))
 
-        # Determine toggle action state
         active_w = None
         minimized_w = None
         visible_w = None
@@ -307,21 +301,15 @@ class AppTrayIcon:
         self.windows = list(dict.fromkeys(self.windows + all_windows))
 
     async def _try_launch_app(self) -> bool:
-        """Try to launch a new instance of the app from its .desktop file.
-
-        Returns True if a process was successfully spawned, False otherwise.
-        """
         import configparser
-        import re
         import shlex
 
+        matches = find_desktop_by_class(self.app_name)
+        if not matches:
+            return False
         try:
-            desktop_file = self._find_desktop_file(self.app_name)
-            if not desktop_file:
-                return False
-
             cp = configparser.ConfigParser(interpolation=None)
-            cp.read(desktop_file)
+            cp.read(str(matches[0]))
             exec_cmd = cp.get("Desktop Entry", "Exec", fallback="").strip()
             if not exec_cmd:
                 return False
@@ -354,170 +342,50 @@ class AppTrayIcon:
                 return p.name, str(p.parent), p.read_bytes()
             logger.warning("icon override not found: %s", self.icon_override)
             return "notification-empty", "", None
-        result = self._resolve_icon_for_class(self.app_name)
+
+        for candidate in find_desktop_by_title(self.title_filter):
+            icon_file = desktop_icon_path(candidate)
+            if icon_file is not None:
+                return self._icon_result(icon_file)
+
+        result = self._icon_for_class(self.app_name)
         if result:
             return result
 
-        # Chrome PWAs share the class "com.google.Chrome"; the title equals
-        # the PWA desktop Name, so resolve the icon by title.
-        if self.title_filter:
-            result = self._find_pwa_icon_by_title(self.title_filter)
-            if result:
-                return result
-
         try:
             full = await discover_windows_full(self.app_name, self.title_filter)
-            for w in full:
-                for candidate in (
-                    w.get("resourceClass", ""),
-                    w.get("resourceName", ""),
-                ):
-                    if candidate:
-                        result = self._resolve_icon_for_class(candidate)
-                        if result:
-                            return result
         except Exception:
-            pass
-        return None
-
-    def _resolve_icon_for_class(
-        self, app_class: str
-    ) -> tuple[str, str, bytes | None] | None:
-        """Resolve icon for an app class: desktop file → icon theme → PWA fallback."""
-        # Try desktop file
-        desktop_file = self._find_desktop_file(app_class)
-        if desktop_file:
-            icon_name = self._read_desktop_field(Path(desktop_file), "Icon")
-            if icon_name:
-                icon_file = self._resolve_icon_file(icon_name)
-                if icon_file:
-                    return icon_file.name, str(icon_file.parent), icon_file.read_bytes()
-
-        # Try Chrome PWA icon
-        pwa_icon = self._find_chrome_pwa_icon(app_class)
-        if pwa_icon:
-            return pwa_icon.name, str(pwa_icon.parent), pwa_icon.read_bytes()
-
-        return None
-
-    def _find_desktop_file(self, app_class: str) -> str | None:
-        home = Path.home()
-        exact_paths = [
-            f"/usr/share/applications/org.kde.{app_class}.desktop",
-            f"/usr/share/applications/{app_class}.desktop",
-            f"{home}/.local/share/flatpak/exports/share/applications/{app_class}.desktop",
-            f"/var/lib/flatpak/exports/share/applications/{app_class}.desktop",
-        ]
-        for dp in exact_paths:
-            if os.path.exists(dp):
-                return dp
-
-        search_dirs = [
-            "/usr/share/applications",
-            f"{home}/.local/share/applications",
-            f"{home}/.local/share/flatpak/exports/share/applications",
-            "/var/lib/flatpak/exports/share/applications",
-        ]
-        matches: list[Path] = []
-        for sd in search_dirs:
-            base = Path(sd)
-            if not base.exists():
-                continue
-            for candidate in base.glob("*.desktop"):
-                if app_class.lower() in candidate.stem.lower():
-                    matches.append(candidate)
-        if not matches:
             return None
-        stem_lower = app_class.lower()
-        exact_end = [m for m in matches if m.stem.lower().endswith(stem_lower)]
-        if exact_end:
-            return str(exact_end[0])
-        best = min(matches, key=lambda m: len(m.stem))
-        return str(best)
-
-    def _resolve_icon_file(self, icon_name: str) -> Path | None:
-        """Resolve an icon name or path to a theme icon file."""
-        if icon_name.startswith("/"):
-            p = Path(icon_name).expanduser()
-            if p.is_file():
-                return p
-            icon_name = p.stem
-        home = Path.home()
-        icon_search_dirs = [
-            f"{home}/.local/share/flatpak/exports/share/icons/hicolor",
-            "/var/lib/flatpak/exports/share/icons/hicolor",
-            "/usr/share/icons/hicolor",
-            "/usr/share/icons/breeze",
-            f"{home}/.local/share/icons/hicolor",
-        ]
-
-        preferred_sizes = [
-            "48x48",
-            "64x64",
-            "32x32",
-            "128x128",
-            "96x96",
-            "24x24",
-            "16x16",
-            "256x256",
-            "512x512",
-        ]
-
-        for icon_dir in icon_search_dirs:
-            base = Path(icon_dir)
-            if not base.exists():
-                continue
-            for size in preferred_sizes:
-                apps_dir = base / size / "apps"
-                if not apps_dir.is_dir():
+        tried = {self.app_name}
+        for w in full:
+            for candidate in (
+                w.get("resourceClass", ""),
+                w.get("resourceName", ""),
+            ):
+                if not candidate or candidate in tried:
                     continue
-                candidate_png = apps_dir / (icon_name + ".png")
-                if candidate_png.is_file():
-                    return candidate_png
-                candidate_svg = apps_dir / (icon_name + ".svg")
-                if candidate_svg.is_file():
-                    return candidate_svg
-
-        return None
-
-    def _find_pwa_icon_by_title(
-        self, title: str
-    ) -> tuple[str, str, bytes | None] | None:
-        """Resolve a Chrome PWA icon by its window title (== the PWA desktop Name)."""
-        if not title:
-            return None
-        apps_dir = Path.home() / ".local" / "share" / "applications"
-        if not apps_dir.is_dir():
-            return None
-        for desktop in apps_dir.glob("*.desktop"):
-            try:
-                name = self._read_desktop_field(desktop, "Name")
-            except Exception:
-                continue
-            if name is None or name.strip() != title.strip():
-                continue
-            icon_name = self._read_desktop_field(desktop, "Icon")
-            if not icon_name:
-                continue
-            icon_file = self._resolve_icon_file(icon_name)
-            if icon_file:
-                return icon_file.name, str(icon_file.parent), icon_file.read_bytes()
+                tried.add(candidate)
+                result = self._icon_for_class(candidate)
+                if result:
+                    return result
         return None
 
     @staticmethod
-    def _read_desktop_field(desktop: Path, field: str) -> str | None:
-        try:
-            for line in desktop.read_text().splitlines():
-                line = line.strip()
-                if line.startswith(f"{field}="):
-                    return line.split("=", 1)[1].strip()
-        except OSError:
-            return None
+    def _icon_result(icon_file: Path) -> tuple[str, str, bytes]:
+        return icon_file.name, str(icon_file.parent), icon_file.read_bytes()
+
+    def _icon_for_class(self, app_class: str) -> tuple[str, str, bytes] | None:
+        for desktop in find_desktop_by_class(app_class):
+            icon_file = desktop_icon_path(desktop)
+            if icon_file is not None:
+                return self._icon_result(icon_file)
+        pwa_icon = self._find_chrome_pwa_icon(app_class)
+        if pwa_icon is not None:
+            return self._icon_result(pwa_icon)
         return None
 
     def _find_chrome_pwa_icon(self, app_class: str) -> Path | None:
-        import re
-
+        """Find a flatpak Chrome PWA manifest icon for a chrome-<id>-Default class."""
         m = re.match(r"^chrome-([a-z0-9]{30,40})-Default$", app_class)
         if not m:
             return None
@@ -600,7 +468,6 @@ class ManagerTrayIcon:
         self.registered = True
 
     def _stop_ui_proc(self):
-        """Stop the manager GUI process synchronously (called early in shutdown)."""
         if self._ui_proc and self._ui_proc.poll() is None:
             self._ui_proc.terminate()
             try:
@@ -619,7 +486,6 @@ class ManagerTrayIcon:
             self.bus = None
 
     async def on_activate(self, x: int = 0, y: int = 0):
-        # Detect if the UI process has died and reset stale state.
         if self._ui_proc is not None and self._ui_proc.poll() is not None:
             self._ui_proc = None
             self._gui_visible = False
@@ -645,7 +511,6 @@ class ManagerTrayIcon:
         if ui_script.exists():
             self._ui_proc = subprocess.Popen([python, str(ui_script)])
         else:
-            # .pyz handling
             pyz_path = str(SRC_DIR / "trayy.pyz")
             env = {
                 **os.environ,
@@ -655,7 +520,6 @@ class ManagerTrayIcon:
                 [python, "-m", "trayy_ui"],
                 env=env,
             )
-        # Wait for UI
         for _ in range(20):
             await asyncio.sleep(0.1)
             ids = await discover_windows("", "Trayy Manager")
@@ -697,8 +561,6 @@ def _kwin_name_matches(
 ) -> bool:
     class_match = False
     if app_name.startswith("regex:"):
-        import re
-
         pattern = app_name[6:]
         rc = resource_class or ""
         rn = resource_name or ""
@@ -715,8 +577,6 @@ def _kwin_name_matches(
 
     if title_filter:
         if title_filter.startswith("regex:"):
-            import re
-
             pattern = title_filter[6:]
             if not re.search(pattern, caption or ""):
                 return False
@@ -929,9 +789,7 @@ class TrayDaemon:
                 return
 
     async def on_kwin_window_removed(self, ev: WindowEvent):
-        # Look up cached window info before removing it.
-        # On removal, KWin may report an empty/stale caption, so use the
-        # cached caption (recorded at windowAdded time) for reliable matching.
+        # On removal KWin may report an empty/stale caption; match against the cached copy from windowAdded.
         cached = self._window_cache.pop(ev.win_id, None)
         if cached:
             resource_class = (
@@ -1084,7 +942,6 @@ def _trayyd_already_running() -> bool:
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        # busctl not available or timed out. assume not running
         return False
 
 
@@ -1114,7 +971,6 @@ async def run_daemon(no_taskbar=True, no_close=True):
     _NO_TASKBAR = no_taskbar
     _NO_CLOSE = no_close
 
-    # check for KWin Wayland session
     r = subprocess.run(["pgrep", "-x", "kwin_wayland"], capture_output=True)
     if r.returncode != 0:
         logger.error(
@@ -1163,7 +1019,7 @@ async def run_daemon(no_taskbar=True, no_close=True):
         )
     )
 
-    # Watch for trayyd dying (e.g. after sleep/wake) via D-Bus NameOwnerChanged signal
+    # Restart trayyd when it loses its D-Bus name (happens e.g. after sleep/wake).
     def _on_trayd_name_owner_changed(msg: Message) -> bool:
         if (
             msg.message_type != MessageType.SIGNAL
@@ -1287,8 +1143,7 @@ async def run_daemon(no_taskbar=True, no_close=True):
     try:
         await stop
     finally:
-        # Stop child processes first. they share the service cgroup,
-        # so they must be gone before exit even if the timed cleanup below fails.
+        # Children share our cgroup; stop them before exit even if the timed cleanup below fails.
         _stop_trayyd()
         manager_icon._stop_ui_proc()
 

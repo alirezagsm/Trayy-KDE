@@ -47,18 +47,11 @@ def check_dependencies():
         sys.exit(1)
 
 
-# Resolve paths: .pyz mode uses sys.argv[0], dev mode uses __file__.
+# .pyz mode: locate the zip from argv[0]; runpy may set it to an internal path like ".../trayy.pyz/trayy_ui.py".
 if ".pyz" in (__file__ or ""):
-    # Three cases for sys.argv[0]:
-    # 1. `python trayy.pyz`          → "/path/to/trayy.pyz"
-    # 2. `python -m trayy_ui` (via PYTHONPATH=trayy.pyz)
-    #    → "/path/to/trayy.pyz/trayy_ui.py"  (runpy sets it to the internal path)
-    # 3. empty string (edge case)
     _candidate = sys.argv[0] if sys.argv[0] else ""
     if not _candidate:
         _candidate = str(Path(__file__).parent)
-    # If argv[0] points inside the zip (e.g., ".../trayy.pyz/trayy_ui.py"),
-    # extract the .pyz path by finding the ".pyz/" segment.
     if ".pyz/" in _candidate:
         _candidate = _candidate[: _candidate.index(".pyz/") + 4]
     SRC_DIR = Path(_candidate).parent.resolve()
@@ -70,6 +63,140 @@ else:
 CONFIG_FILE = PROJECT_DIR / ".config"
 TRAYD_BINARY = SRC_DIR / "trayyd"
 PID_FILE = Path("/tmp/.trayy.pid")
+
+# XDG lookup order; earlier entries mask later ones.
+APPLICATION_DIRS = [
+    str(Path.home() / ".local" / "share" / "applications"),
+    "/var/lib/flatpak/exports/share/applications",
+    str(
+        Path.home()
+        / ".local"
+        / "share"
+        / "flatpak"
+        / "exports"
+        / "share"
+        / "applications"
+    ),
+    "/usr/share/applications",
+]
+
+ICON_THEME_DIRS = [
+    str(
+        Path.home()
+        / ".local"
+        / "share"
+        / "flatpak"
+        / "exports"
+        / "share"
+        / "icons"
+        / "hicolor"
+    ),
+    "/var/lib/flatpak/exports/share/icons/hicolor",
+    "/usr/share/icons/hicolor",
+    "/usr/share/icons/breeze",
+    str(Path.home() / ".local" / "share" / "icons" / "hicolor"),
+]
+
+# Earlier entries take precedence.
+ICON_SCAN_SIZES = [
+    "128x128",
+    "512x512",
+    "256x256",
+    "64x64",
+    "96x96",
+    "48x48",
+    "32x32",
+    "24x24",
+]
+
+# Raster size for Qt theme lookups.
+QT_ICON_SIZE = 128
+
+
+def read_desktop_field(desktop: Path, field: str) -> str | None:
+    try:
+        for line in desktop.read_text().splitlines():
+            line = line.strip()
+            if line.startswith(f"{field}="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        return None
+    return None
+
+
+def find_desktop_by_title(title: str) -> list[Path]:
+    """Exact Name= matches first, then closest partial matches."""
+    if not title or title.startswith("regex:"):
+        return []
+    needle = title.strip().lower()
+    exact: list[Path] = []
+    partial: list[tuple[int, Path]] = []
+    for d in APPLICATION_DIRS:
+        apps_dir = Path(d)
+        if not apps_dir.is_dir():
+            continue
+        for desktop in apps_dir.glob("*.desktop"):
+            name = read_desktop_field(desktop, "Name")
+            if not name:
+                continue
+            n = name.strip().lower()
+            if n == needle:
+                exact.append(desktop)
+            elif needle in n or n in needle:
+                partial.append((abs(len(n) - len(needle)), desktop))
+    return [*exact, *[d for _, d in sorted(partial)]]
+
+
+def find_theme_icon(icon_name: str) -> Path | None:
+    if icon_name.startswith("/"):
+        p = Path(icon_name).expanduser()
+        if p.is_file():
+            return p
+        icon_name = p.stem
+    for theme_dir in ICON_THEME_DIRS:
+        base = Path(theme_dir)
+        if not base.exists():
+            continue
+        for size in ICON_SCAN_SIZES:
+            category_dir = base / size / "apps"
+            if not category_dir.is_dir():
+                continue
+            for ext in (".png", ".svg"):
+                candidate = category_dir / (icon_name + ext)
+                if candidate.is_file():
+                    return candidate
+    return None
+
+
+def desktop_icon_path(desktop: Path) -> Path | None:
+    icon_ref = read_desktop_field(desktop, "Icon")
+    if not icon_ref:
+        return None
+    return find_theme_icon(icon_ref)
+
+
+def find_desktop_by_class(app_class: str) -> list[Path]:
+    """Exact filename matches first, then ranked partial stems."""
+    cls = (app_class or "").lower()
+    if not cls or cls.startswith("regex:"):
+        return []
+    exact: list[Path] = []
+    partial: list[tuple[int, int, Path]] = []  # (ends-with rank, stem length, path)
+    for d in APPLICATION_DIRS:
+        base = Path(d)
+        if not base.is_dir():
+            continue
+        for name in (f"org.kde.{cls}", cls):
+            p = base / f"{name}.desktop"
+            if p.is_file():
+                exact.append(p)
+        for candidate in base.glob("*.desktop"):
+            stem = candidate.stem.lower()
+            if cls in stem:
+                rank = 0 if stem.endswith(cls) else 1
+                partial.append((rank, len(stem), candidate))
+    ranked = [*exact, *[p for _, _, p in sorted(partial)]]
+    return list(dict.fromkeys(ranked))
 
 
 def _read_flag(lines: list[str], index: int, name: str) -> bool:
