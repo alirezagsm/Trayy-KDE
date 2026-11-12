@@ -30,6 +30,12 @@ for f in trayy.pyz trayyd; do
     chmod +x "$INSTALL_DIR/$f"
 done
 
+echo ">> setting up Python environment..."
+command -v python3 >/dev/null || { echo "error: python3 not found"; exit 1; }
+VENV="$INSTALL_DIR/.venv"
+[ -x "$VENV/bin/pip" ] || python3 -m venv "$VENV"
+"$VENV/bin/pip" install --quiet dbus-fast PyQt6 pillow
+
 ICON_URL="https://raw.githubusercontent.com/$REPO/main/media/logo.png"
 curl -sL -H "User-Agent: Trayy-Installer" -o "$INSTALL_DIR/trayy.png" "$ICON_URL" \
     || echo "warning: could not download icon — desktop entry will use a fallback icon"
@@ -41,7 +47,7 @@ cat > "$DESKTOP_FILE" <<EOF
 Type=Application
 Name=Trayy
 Comment=Send apps to the system tray
-Exec=$INSTALL_DIR/trayy.pyz
+Exec=$VENV/bin/python3 $INSTALL_DIR/trayy.pyz
 Icon=$INSTALL_DIR/trayy.png
 Terminal=false
 Categories=Utility;
@@ -51,7 +57,7 @@ EOF
 update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
 
 echo ">> done! Trayy is installed at $INSTALL_DIR"
-echo "   Launch it from your app menu, or run: $INSTALL_DIR/trayy.pyz"
+echo "   Launch it from your app menu, or run: $VENV/bin/python3 $INSTALL_DIR/trayy.pyz"
 
 echo ">> checking input group membership..."
 if id -nG | tr ' ' '\n' | grep -qx "input"; then
