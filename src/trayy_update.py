@@ -56,21 +56,26 @@ def _parse_release_json(data: dict) -> Optional[ReleaseInfo]:
             algo, hex_hash = digest.split(":", 1)
         else:
             algo, hex_hash = "sha256", ""
-        assets.append(ReleaseAsset(
-            name=a.get("name", ""),
-            download_url=a.get("browser_download_url", ""),
-            digest_algo=algo,
-            digest_hex=hex_hash,
-            size=a.get("size", 0),
-        ))
+        assets.append(
+            ReleaseAsset(
+                name=a.get("name", ""),
+                download_url=a.get("browser_download_url", ""),
+                digest_algo=algo,
+                digest_hex=hex_hash,
+                size=a.get("size", 0),
+            )
+        )
     return ReleaseInfo(tag_name=tag, assets=assets)
 
 
 async def _curl(url: str, *, timeout: float = 5.0) -> Optional[bytes]:
     try:
         proc = await asyncio.create_subprocess_exec(
-            "curl", "-s", "-L",
-            "-H", "User-Agent: Trayy-Updater/1.0",
+            "curl",
+            "-s",
+            "-L",
+            "-H",
+            "User-Agent: Trayy-Updater/1.0",
             url,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -134,15 +139,22 @@ async def download_release_asset(
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "curl", "-s", "-L", "-o", output_path,
-            "-H", "User-Agent: Trayy-Updater/1.0",
+            "curl",
+            "-s",
+            "-L",
+            "-o",
+            output_path,
+            "-H",
+            "User-Agent: Trayy-Updater/1.0",
             target.download_url,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         _, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         if proc.returncode != 0:
-            logger.error("curl failed (rc=%d): %s", proc.returncode, stderr.decode().strip())
+            logger.error(
+                "curl failed (rc=%d): %s", proc.returncode, stderr.decode().strip()
+            )
             return False
     except FileNotFoundError:
         logger.error("curl not found")
@@ -154,14 +166,19 @@ async def download_release_asset(
         logger.error("download failed: %s", e)
         return False
 
-    # Verify hash
     if not target.digest_hex:
-        logger.error("no digest published for %s — refusing to install unverified release", asset_name)
+        logger.error(
+            "no digest published for %s — refusing to install unverified release",
+            asset_name,
+        )
         return False
 
     hash_fn = getattr(hashlib, target.digest_algo.lower(), None)
     if hash_fn is None:
-        logger.error("unsupported digest algorithm: %s — refusing to install unverified release", target.digest_algo)
+        logger.error(
+            "unsupported digest algorithm: %s — refusing to install unverified release",
+            target.digest_algo,
+        )
         return False
 
     try:
@@ -175,8 +192,14 @@ async def download_release_asset(
     computed = h.hexdigest()
     expected = target.digest_hex.lower()
     if computed != expected:
-        logger.error("hash mismatch for %s: expected %s:%s, got %s:%s",
-                     asset_name, target.digest_algo, expected, target.digest_algo, computed)
+        logger.error(
+            "hash mismatch for %s: expected %s:%s, got %s:%s",
+            asset_name,
+            target.digest_algo,
+            expected,
+            target.digest_algo,
+            computed,
+        )
         return False
 
     logger.info("hash verified for %s (%s)", asset_name, target.digest_algo)
@@ -201,17 +224,16 @@ async def apply_update(
     progress_cb=None,
     timeout: float = 120.0,
 ) -> tuple[bool, str]:
-    """Download the latest release zip and replace trayy.pyz/trayyd in install_dir.
-
-    The .config file is left untouched. Returns (success, message).
-    """
+    """Replace trayy.pyz/trayyd in install_dir from the latest release zip; leaves .config untouched."""
     install = Path(install_dir)
     tmp_dir = Path(tempfile.mkdtemp(prefix="trayy-update-"))
     zip_path = tmp_dir / RELEASE_ZIP_NAME
     try:
         if progress_cb:
             progress_cb(f"Downloading {RELEASE_ZIP_NAME}…")
-        ok = await download_release_asset(RELEASE_ZIP_NAME, str(zip_path), timeout=timeout)
+        ok = await download_release_asset(
+            RELEASE_ZIP_NAME, str(zip_path), timeout=timeout
+        )
         if not ok:
             return False, f"failed to download {RELEASE_ZIP_NAME}"
 
@@ -228,8 +250,7 @@ async def apply_update(
                 if member is None:
                     return False, f"'{name}' not found in {RELEASE_ZIP_NAME}"
                 dest = install / name
-                # Write to a temp file in the same directory, then atomically
-                # replace. avoids a half-written binary on interruption.
+                # Temp file + atomic rename; avoids a half-written binary on interruption.
                 tmp_dest = dest.with_suffix(dest.suffix + ".new")
                 with zf.open(member) as src, open(tmp_dest, "wb") as out:
                     shutil.copyfileobj(src, out)

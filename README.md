@@ -18,12 +18,12 @@ Looking for Trayy for Windows? <a href="https://github.com/alirezagsm/Trayy-Wind
 
 ## 🎯 Features
 
--   **Send to Tray**: Send your favorite apps to the system tray for a clutter-free workspace!
--   **Hide and Seek Champion**: Enjoy the power to completely hide apps from the taskbar, keeping your desktop neat and tidy.
--   **App Support**: Ideal for Progressive Web Apps (PWAs) and (most) apps that didn't get the memo about system tray support.
--   **Custom Icons**: Dress up your tray with custom icons for any app!
--   **Compatible with KDE Plasma**: Built for KDE Plasma on Wayland, with support for system tray icons and window management.
--   **Light as a Feather**: Fully portable and extremely lightweight.
+- **Send to Tray**: Send your favorite apps to the system tray for a clutter-free workspace!
+- **Hide and Seek Champion**: Enjoy the power to completely hide apps from the taskbar, keeping your desktop neat and tidy.
+- **App Support**: Ideal for Progressive Web Apps (PWAs) and (most) apps that didn't get the memo about system tray support.
+- **Custom Icons**: Dress up your tray with custom icons for any app!
+- **Compatible with KDE Plasma**: Built for KDE Plasma on Wayland, with support for system tray icons and window management.
+- **Light as a Feather**: Fully portable and extremely lightweight.
 
 <p align="center">
   <img src="media/demo.png" alt="GUI demo" style="height:460px; width:auto;" align="bottom"/>
@@ -36,38 +36,33 @@ Looking for Trayy for Windows? <a href="https://github.com/alirezagsm/Trayy-Wind
 
 1. Run the install script which installs Trayy to `~/.local/share/trayy` and adds your user to the `input` group which is needed for click interception:
 
-    ```bash
-    curl -sL https://raw.githubusercontent.com/alirezagsm/Trayy-KDE/main/install.sh | bash
-    ```
-
+   ```bash
+   curl -sL https://raw.githubusercontent.com/alirezagsm/Trayy-KDE/main/install.sh | bash
+   ```
 2. Launch **Trayy** from your application menu.
-
 3. Activate the KWin script: open **System Settings → Window Management → KWin Scripts**, find **Trayy** in the list, activate it and click **Apply**. Trayy registers a KWin script that it uses for window management.
 
 ### Method B: Manual Install
 
 1. Install the Python dependencies:
 
-    ```bash
-    pip install dbus-next PyQt6
-    ```
-
+   ```bash
+   pip install dbus-fast PyQt6 pillow
+   ```
 2. Add your user to the `input` group (needed for click interception):
 
-    ```bash
-    sudo usermod -aG input $USER
-    ```
+   ```bash
+   sudo usermod -aG input $USER
+   ```
 
-    Then log out and back in (or run `newgrp input`).
-
+   Then log out and back in (or run `newgrp input`).
 3. Kick things off by downloading the latest release from the [Releases page](https://github.com/alirezagsm/Trayy-KDE/releases) and unzipping it to your desired location.
 4. Make sure `trayy.pyz` and `trayyd` are hanging out in the same folder. Make them executable and run the app to get the party started:
 
-    ```bash
-    chmod +x trayy.pyz trayyd
-    ./trayy.pyz
-    ```
-
+   ```bash
+   chmod +x trayy.pyz trayyd
+   ./trayy.pyz
+   ```
 5. Activate the KWin script: open **System Settings → Window Management → KWin Scripts**, find **Trayy** in the list, activate it and click **Apply**.
 
 ### Setup
@@ -123,8 +118,8 @@ Trayy creates virtual forward devices named `trayy`. Add a skip rule to your rem
 
 ## ✨Tips and Tricks
 
--   **Take a peek**: Click on a tray icon to bring its app into the spotlight. If it's already in focus, it'll sneak back into the tray. This way, you can quickly peek at your apps without breaking your workflow!
--   **Startup**: Let Trayy join your startup squad! Add Trayy to your KDE Autostart settings, along with all your other favorite apps you want to keep tucked away in the system tray. Trayy will chill for a bit, letting the startup process finish, then swoop in to tidy everything up! It's a game changer for messaging and productivity apps!
+- **Take a peek**: Click on a tray icon to bring its app into the spotlight. If it's already in focus, it'll sneak back into the tray. This way, you can quickly peek at your apps without breaking your workflow!
+- **Startup**: Let Trayy join your startup squad! Add Trayy to your KDE Autostart settings, along with all your other favorite apps you want to keep tucked away in the system tray. Trayy will chill for a bit, letting the startup process finish, then swoop in to tidy everything up! It's a game changer for messaging and productivity apps!
 
 ## 😊 Support
 
